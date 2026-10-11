@@ -99,7 +99,7 @@ last command again: it must finish in seconds without compiling anything.
 ### 4. Build ColorSlicer
 
 ```cmd
-cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSLIC3R_BUILD_TESTS=OFF -DCMAKE_PREFIX_PATH="%CD%/deps/build/destdir/usr/local"
+cmake -S . -B build -G "Visual Studio 17 2022" -A x64 -DSLIC3R_BUILD_TESTS=OFF -DSLIC3R_ENABLE_WIN10_MESH_REPAIR=OFF -DCMAKE_PREFIX_PATH="%CD%/deps/build/destdir/usr/local"
 cmake --build build --config Release --parallel
 ```
 
