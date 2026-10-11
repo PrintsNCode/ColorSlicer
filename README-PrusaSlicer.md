@@ -1,7 +1,4 @@
-> **ColorSlicer** is an unofficial fork of PrusaSlicer 3.0 alpha that keeps **colors** and **print settings**
-> when you open 3MF files from Bambu Studio, OrcaSlicer, Anycubic Slicer Next and others, and colors from OBJ files.
-> It is **not affiliated with or endorsed by Prusa Research**. See [COLORSLICER.md](COLORSLICER.md) for what it does,
-> how to build it and how to install it. The original PrusaSlicer README follows.
+> This is the original PrusaSlicer README, kept unchanged for reference. For ColorSlicer see [README.md](README.md).
 
 ![PrusaSlicer logo](/resources/icons/PrusaSlicer_128px.png)
 

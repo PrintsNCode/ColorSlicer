@@ -1,7 +1,10 @@
 # ColorSlicer
 
 A fork of [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) 3.0.0-alpha12 that keeps **colors** and
-**print settings** when you open a 3MF written by another application.
+**print settings** when you open a 3MF written by another application, and **colors** from OBJ files.
+
+**Download:** see the [Releases page](https://github.com/PrintsNCode/ColorSlicer/releases) (macOS, Apple Silicon).
+The original PrusaSlicer README is in [README-PrusaSlicer.md](README-PrusaSlicer.md).
 
 > ColorSlicer is an independent, unofficial project, **not affiliated with or endorsed by Prusa Research**.
 > "Prusa" and "PrusaSlicer" are trademarks of Prusa Research a.s. This fork is licensed under the same
@@ -175,5 +178,5 @@ Panda2Prusa, PaintPort, BedReady. ColorSlicer does it inside the slicer, without
 ## Credits and license
 
 Based on [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) by Prusa Research, which is based on
-Slic3r by Alessandro Ranellucci and the RepRap community. Changes by Teo ([@PrintsNCode](https://github.com/PrintsNCode)). Licensed under the **GNU Affero General Public License v3.0**; the source of any distributed
+Slic3r by Alessandro Ranellucci and the RepRap community. Changes by Carlos ([@PrintsNCode](https://github.com/PrintsNCode)). Licensed under the **GNU Affero General Public License v3.0**; the source of any distributed
 binary must be made available. See [LICENSE](LICENSE).
