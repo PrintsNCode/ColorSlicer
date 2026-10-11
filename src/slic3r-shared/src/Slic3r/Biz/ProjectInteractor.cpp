@@ -1167,6 +1167,15 @@ void ProjectInteractor::set_output_extension(Domain::SelectionId project_id, con
 
 void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::path> paths)
 {
+    // A single 3MF added to an empty project (the "Add" / "Import" button) is opened as a project, exactly like
+    // "Open project": a 3MF written by another application then brings its colors and print settings and
+    // starts on the printer with the most tool slots. Into a project that already has objects it is still added.
+    if (paths.size() == 1 && FileLoadingLogic::is_project_file(paths.front().string())
+        && selected_project_is_empty()) {
+        this->load_project(paths.front(), EmptyProjectAction::Replace);
+        return;
+    }
+
     invoke_listeners<IProjectsChangedListener>([](IProjectsChangedListener* l) {
         l->on_file_load_started();
     });
@@ -1180,19 +1189,50 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
         const bool single_extruder = empty_cc == nullptr || empty_cc->selected_preset().hw_config.material_slot_count() <= 1;
         if (single_extruder) {
             if (std::optional<Domain::ImportedColors> colors = FileLoadingLogic::peek_obj_colors(paths.front())) {
-                const SelectionId previous_project_id = m_selection.project_id;
-                Project colored_project;
-                colored_project.imported_colors() = std::move(colors);
-                if (this->do_load_project(std::move(colored_project), {}).has_value())
-                    this->remove_project(previous_project_id);
+                // The project is replaced from the main thread dispatcher, the same way the result of a
+                // 3MF loading job is delivered, and not inside the file dialog callback: replacing it while
+                // the interface is being drawn leaves the renderer with textures of the removed project.
+                Platform::PlatformServices::instance().main_thread_dispatcher().dispatch_on_main_thread(
+                    [this, paths, colors = std::move(*colors)]() mutable
+                    {
+                        const SelectionId previous_project_id = m_selection.project_id;
+                        Project colored_project;
+                        colored_project.imported_colors() = std::move(colors);
+                        if (this->do_load_project(std::move(colored_project), {}).has_value())
+                            this->remove_project(previous_project_id);
+                        this->import_models_into_selected_project(std::move(paths));
+                    }
+                );
+                return;
             }
         }
     }
 
+    this->import_models_into_selected_project(std::move(paths));
+}
+
+void ProjectInteractor::import_models_into_selected_project(std::vector<boost::filesystem::path> paths)
+{
     const auto& proj            = m_workbench.project(selected_project_id());
     Domain::BedRef selected_bed = scene_interactor().bed_selection().last_selected_bed();
     const Domain::ConfigContainer* cc =
         proj.find_config_container(selected_bed.config_container_id);
+    const auto has_bed_instance = [](const Domain::ConfigContainer* container, std::size_t instance_id) {
+        if (container == nullptr)
+            return false;
+        for (const auto& bed_instance : container->bed_instances()) {
+            if (bed_instance->id().id == instance_id)
+                return true;
+        }
+        return false;
+    };
+    if (!has_bed_instance(cc, selected_bed.instance_id)) {
+        // The bed selection can still point to the project that was just replaced (see above):
+        // fall back to the first bed of the project that is selected now.
+        cc = proj.config_containers().front().get();
+        selected_bed = {cc->id().id, cc->bed_instances().front()->id().id};
+        scene_interactor().bed_selection().select_one(selected_bed, Scene::CameraActionOnBedSelection::CenterOnBed);
+    }
     const Domain::BedInstance& inst = cc->find_bed_instance(selected_bed.instance_id);
     int slot_count             = cc->selected_preset().hw_config.material_slot_count();
     std::vector<std::string> extruder_colors;

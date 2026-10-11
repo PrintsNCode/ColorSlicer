@@ -39,6 +39,11 @@ When a 3MF **without PrusaSlicer's own project data** is opened:
 
 3MF files saved by PrusaSlicer are loaded as before.
 
+This happens when the file is opened as a project (**File → Open project**, dragging a single 3MF into the window,
+or the **Add / Import** button while the current project is empty). If the project already has objects, the file
+is added to it and its colors are mapped to the nearest extruder color of the current printer; print settings are
+not imported in that case.
+
 ### Color sources understood
 
 | Source in the 3MF | What is read |
@@ -60,8 +65,9 @@ OBJ files keep their colors too, from two sources:
 | Vertex colors `v x y z r g b` (Blender, MeshLab...) | A face takes the average of its vertices (0-1 or 0-255) |
 | `mtllib` + `usemtl` | `Kd` of the material in the `.mtl` next to the OBJ |
 
-Vertex colors win over materials. Colors are weighted by the area they cover; more than 16 are merged into
-the nearest ones. The most used color becomes the extruder of the object and the other faces are painted.
+Vertex colors win over materials. Colors are weighted by the area they cover. Up to 16 distinct colors are kept; OBJ files with continuous
+colors (scans, gradients, per-vertex painting) are quantized to a small palette (k-means in Lab space), so a
+dark model with a few bright details no longer ends up all black. The most used color becomes the extruder of the object and the other faces are painted.
 Only OBJ files with two or more colors are treated as colored.
 
 - In an **empty project with one extruder**, a colored OBJ starts a new project on the printer with the most
@@ -71,20 +77,22 @@ Only OBJ files with two or more colors are treated as colored.
 ### Print settings translated
 
 Read from `Metadata/project_settings.config` (Bambu Studio / OrcaSlicer / Anycubic Slicer Next format).
-Unknown keys, and values that are not valid for the target option, are skipped.
+Unknown keys, and values that are not valid for the target option, are skipped. Values are also written to
+the tool presets that override the print preset (fill density and pattern, for example), so they are not
+hidden by an override.
 
 | Group | Foreign key → PrusaSlicer option |
 |---|---|
 | Layers | `layer_height`→`layer_height`, `initial_layer_print_height`→`first_layer_height` |
 | Walls and shells | `wall_loops`→`perimeters`, `top_shell_layers`→`top_solid_layers`, `bottom_shell_layers`→`bottom_solid_layers`, `top_shell_thickness`→`top_solid_min_thickness`, `bottom_shell_thickness`→`bottom_solid_min_thickness`, `wall_generator`→`perimeter_generator`, `wall_sequence`→`external_perimeters_first`, `detect_thin_wall`→`thin_walls`, `ensure_vertical_shell_thickness`→`ensure_vertical_shell_thickness`, `spiral_mode`→`spiral_vase` |
 | Seam | `seam_position`→`seam_position` (`back`→`rear`, `aligned_back`→`aligned`) |
-| Infill and surfaces | `sparse_infill_density`→`fill_density`, `sparse_infill_pattern`→`fill_pattern`, `top_surface_pattern`→`top_fill_pattern`, `bottom_surface_pattern`→`bottom_fill_pattern`, `infill_direction`→`fill_angle`, `ironing_type`→`ironing` + `ironing_type` |
-| Supports | `enable_support` + `support_type`→`support_material` (off / manual only / on), `support_style` / tree→`support_material_style`, `support_threshold_angle`→`support_material_threshold`, `support_top_z_distance`→`support_material_contact_distance`, `support_bottom_z_distance`→`support_material_bottom_contact_distance`, `support_interface_top_layers`→`support_material_interface_layers`, `support_base_pattern_spacing`→`support_material_spacing`, `support_object_xy_distance`→`support_material_xy_spacing`, `support_on_build_plate_only`→`support_material_buildplate_only`, `raft_layers`→`raft_layers` |
+| Infill and surfaces | `sparse_infill_density`→`fill_density`, `sparse_infill_pattern`→`fill_pattern`, `top_surface_pattern`→`top_fill_pattern`, `bottom_surface_pattern`→`bottom_fill_pattern`, `infill_direction`→`fill_angle`, `ironing_type`→`ironing` + `ironing_type`, `ironing_speed`, `ironing_spacing`, `ironing_flow`→`ironing_flowrate`, `infill_anchor`, `infill_anchor_max`, `infill_wall_overlap`→`infill_overlap`, `bridge_angle`, `thick_bridges`, `extra_perimeters_on_overhangs`, `minimum_sparse_infill_area`→`solid_infill_below_area` |
+| Supports | `enable_support` + `support_type`→`support_material` (off / manual only / on), `support_style` / tree→`support_material_style`, `support_threshold_angle`→`support_material_threshold`, `support_top_z_distance`→`support_material_contact_distance`, `support_bottom_z_distance`→`support_material_bottom_contact_distance`, `support_interface_top_layers`→`support_material_interface_layers`, `support_base_pattern_spacing`→`support_material_spacing`, `support_object_xy_distance`→`support_material_xy_spacing`, `support_on_build_plate_only`→`support_material_buildplate_only`, `raft_layers`, `support_angle`→`support_material_angle`, `support_interface_spacing`→`support_material_interface_spacing`, `support_base_pattern`→`support_material_pattern`, `support_interface_pattern`→`support_material_interface_pattern`, `support_interface_bottom_layers`→`support_material_bottom_interface_layers`, `raft_contact_distance`, `raft_first_layer_expansion` |
 | Skirt, brim, prime tower | `brim_type`→`brim_type`, `brim_width`→`brim_width`, `skirt_loops`→`skirts`, `skirt_distance`, `skirt_height`, `enable_prime_tower`→`wipe_tower`, `prime_tower_width`→`wipe_tower_width` |
 | Speeds | `outer_wall_speed`→`external_perimeter_speed`, `inner_wall_speed`→`perimeter_speed`, `small_perimeter_speed`, `sparse_infill_speed`→`infill_speed`, `internal_solid_infill_speed`→`solid_infill_speed`, `top_surface_speed`→`top_solid_infill_speed`, `bridge_speed`, `gap_infill_speed`→`gap_fill_speed`, `initial_layer_speed`→`first_layer_speed`, `travel_speed`, `support_speed`→`support_material_speed` |
 | Accelerations | `default_acceleration`, `outer_wall_acceleration`→`external_perimeter_acceleration`, `inner_wall_acceleration`→`perimeter_acceleration`, `sparse_infill_acceleration`→`infill_acceleration`, `top_surface_acceleration`→`top_solid_infill_acceleration`, `initial_layer_acceleration`→`first_layer_acceleration`, `bridge_acceleration`, `travel_acceleration` |
 | Line widths | `line_width`→`extrusion_width`, and the per-feature widths (`outer_wall_line_width`, `inner_wall_line_width`, `sparse_infill_line_width`, `internal_solid_infill_line_width`, `top_surface_line_width`, `initial_layer_line_width`, `support_line_width`) |
-| Precision | `resolution`, `xy_contour_compensation`→`xy_size_compensation`, `bridge_flow`→`bridge_flow_ratio`, `fuzzy_skin`, `fuzzy_skin_thickness` |
+| Precision | `resolution`, `xy_contour_compensation`→`xy_size_compensation`, `bridge_flow`→`bridge_flow_ratio`, `fuzzy_skin`, `fuzzy_skin_thickness`, `elefant_foot_compensation`, `slice_closing_radius`, `reduce_crossing_wall`→`avoid_crossing_perimeters`, `print_sequence`→`complete_objects` |
 
 Approximations: Orca `auto_brim`/`brim_ears` → `outer_only`; `ensure_moderate` and `ensure_critical_only` →
 `partial`; `zig-zag` → `rectilinear`; `tri-hexagon` → `stars`; `monotonicline` → `monotoniclines`.

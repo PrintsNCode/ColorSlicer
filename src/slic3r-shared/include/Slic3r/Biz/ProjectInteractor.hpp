@@ -671,6 +671,9 @@ private:
         const std::optional<boost::filesystem::path>& project_file_path = std::nullopt
     );
 
+    /** The part of load_models_to_project() that adds the files to the selected project. */
+    void import_models_into_selected_project(std::vector<boost::filesystem::path> paths);
+
     void do_result_export_inner(
         const Domain::SlicingId id,
         PhysicalPrinter::PhysicalPrinterConfig&& print_host_config,

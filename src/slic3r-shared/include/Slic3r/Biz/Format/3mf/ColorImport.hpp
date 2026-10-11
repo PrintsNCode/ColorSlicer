@@ -85,10 +85,21 @@ public:
     const Rgba& color(std::size_t id) const { return m_entries[id].color; }
 
     /**
-     * Keeps the max_colors most used colors, merging every other one into its nearest kept color.
-     * max_colors is clamped to [1, MAX_TRIANGLE_STATE].
+     * Reduces the colors to at most max_colors. max_colors is clamped to [1, MAX_TRIANGLE_STATE].
+     *
+     * - Up to QUANTIZE_FACTOR * max_colors different colors (flat colors of a CAD or Blender model):
+     *   keeps the max_colors most used colors, merging every other one into its nearest kept color.
+     *   Colors ordered by usage, most used first.
+     * - More than that (continuous colors of a scan, a photogrammetry or an AI generated model): a
+     *   weighted k-means in the CIE Lab color space finds max_colors representative colors, so that
+     *   a few small but very different regions are not lost behind the most used shades. They are
+     *   ordered so that every prefix of the list is a good palette: the most used color first, then
+     *   each time the color that is both used and far from the ones already chosen.
      */
     PaletteResult build(std::size_t max_colors) const;
+
+    /// build() quantizes when there are more than QUANTIZE_FACTOR * max_colors different colors.
+    static constexpr std::size_t QUANTIZE_FACTOR = 2;
 
 private:
     struct Entry

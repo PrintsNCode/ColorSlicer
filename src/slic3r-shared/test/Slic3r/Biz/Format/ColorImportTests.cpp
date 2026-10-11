@@ -114,6 +114,33 @@ TEST_CASE("PaletteBuilder merges into a sensible neighbour", "[colorimport]")
     CHECK(result.state_of_input[cyan] == 2);
 }
 
+TEST_CASE("PaletteBuilder quantizes continuous colors", "[colorimport]")
+{
+    // A scan: a hundred dark shades cover almost everything, a few small regions have other colors.
+    PaletteBuilder builder;
+    for (int i = 0; i < 100; ++i)
+        builder.add(Rgba{static_cast<std::uint8_t>(10 + i % 10), static_cast<std::uint8_t>(10 + i / 10), 12}, 100.);
+    const auto red    = builder.add(Rgba{220, 30, 30}, 1.);
+    const auto orange = builder.add(Rgba{230, 140, 40}, 1.);
+    const auto white  = builder.add(Rgba{240, 240, 240}, 1.);
+
+    const PaletteResult result = builder.build(4);
+    REQUIRE(result.colors.size() == 4);
+    // The dark shades share one color, the small regions are not lost behind them.
+    CHECK(result.state_of_input[0] == 1);
+    CHECK(result.colors[0].r < 40);
+    CHECK(result.state_of_input[red] != result.state_of_input[orange]);
+    CHECK(result.state_of_input[red] != result.state_of_input[white]);
+    CHECK(result.state_of_input[orange] != result.state_of_input[white]);
+    CHECK(result.state_of_input[red] != 1);
+
+    // A gradient with many shades still gives max_colors colors.
+    PaletteBuilder gradient;
+    for (int i = 0; i < 100; ++i)
+        gradient.add(Rgba{static_cast<std::uint8_t>(i * 2), 0, 0}, 1.);
+    CHECK(gradient.build(16).colors.size() == 16);
+}
+
 TEST_CASE("map_to_nearest", "[colorimport]")
 {
     const std::vector<Rgba> source{{250, 0, 0}, {0, 0, 250}};

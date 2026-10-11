@@ -143,7 +143,26 @@ ApplyReport apply(Domain::ConfigContainer& container, const Settings& settings)
     if (container.print_technology() != Domain::PrinterTechnology::FFF) {
         return {};
     }
-    return apply_to_box(container.mutable_selected_preset().print.config_box(), settings);
+    auto& selected = container.mutable_selected_preset();
+    ApplyReport report = apply_to_box(selected.print.config_box(), settings);
+
+    // Tool presets can override print values (fill density, fill pattern, ...).
+    // When one of them has the override switched on it would win over the value
+    // we just set, so keep it in sync with the imported value.
+    for (auto& tool : selected.tools) {
+        Domain::ConfigBox& box = tool.config_box();
+        for (const auto& [key, text] : settings) {
+            Domain::ConfigItem* ov = box.overrides.find(key);
+            if (ov == nullptr || !box.overrides.get(key).has_value()) {
+                continue;
+            }
+            Domain::ConfigItem candidate = *ov;
+            if (assign_from_string(candidate, text)) {
+                *ov = std::move(candidate);
+            }
+        }
+    }
+    return report;
 }
 
 } // namespace Slic3r::Biz::Format::ForeignPrint

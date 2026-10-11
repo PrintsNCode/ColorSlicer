@@ -232,6 +232,19 @@ constexpr std::pair<const char*, const char*> SHELL_THICKNESS_TABLE[] = {
     {"ensure_all", "enabled"},
 };
 
+constexpr std::pair<const char*, const char*> SUPPORT_BASE_PATTERN_TABLE[] = {
+    {"rectilinear", "rectilinear"},
+    {"rectilinear-grid", "rectilinear-grid"},
+    {"honeycomb", "honeycomb"},
+    {"lightning", "lightning"},
+};
+
+constexpr std::pair<const char*, const char*> SUPPORT_INTERFACE_PATTERN_TABLE[] = {
+    {"rectilinear", "rectilinear"},
+    {"concentric", "concentric"},
+    {"auto", "auto"},
+};
+
 } // namespace
 
 // ----------------------------------------------------------------------------
@@ -295,6 +308,16 @@ Settings translate(const std::map<std::string, std::string>& foreign)
     m.direct("support_object_xy_distance", "support_material_xy_spacing");
     m.boolean("support_on_build_plate_only", "support_material_buildplate_only");
     m.direct("raft_layers", "raft_layers");
+    m.direct("support_angle", "support_material_angle");
+    m.direct("support_interface_spacing", "support_material_interface_spacing");
+    m.mapped("support_base_pattern", "support_material_pattern", SUPPORT_BASE_PATTERN_TABLE);
+    m.mapped("support_interface_pattern", "support_material_interface_pattern", SUPPORT_INTERFACE_PATTERN_TABLE);
+    if (const std::string* b = find(foreign, "support_interface_bottom_layers")) {
+        // -1 means "same as top" in Bambu/Orca; PrusaSlicer uses -1 for "same as top" too.
+        m.emit("support_material_bottom_interface_layers", *b);
+    }
+    m.boolean("raft_first_layer_expansion", "raft_first_layer_expansion");
+    m.direct("raft_contact_distance", "raft_contact_distance");
 
     // Skirt, brim, prime tower
     translate_brim(m, foreign);
@@ -343,6 +366,24 @@ Settings translate(const std::map<std::string, std::string>& foreign)
     m.direct("bridge_flow", "bridge_flow_ratio");
     m.mapped("fuzzy_skin", "fuzzy_skin", FUZZY_TABLE);
     m.direct("fuzzy_skin_thickness", "fuzzy_skin_thickness");
+
+    // Infill and shell details
+    m.direct("infill_anchor", "infill_anchor");
+    m.direct("infill_anchor_max", "infill_anchor_max");
+    m.direct("infill_wall_overlap", "infill_overlap");
+    m.direct("bridge_angle", "bridge_angle");
+    m.boolean("thick_bridges", "thick_bridges");
+    m.boolean("extra_perimeters_on_overhangs", "extra_perimeters_on_overhangs");
+    m.direct("minimum_sparse_infill_area", "solid_infill_below_area");
+    m.direct("elefant_foot_compensation", "elefant_foot_compensation");
+    m.direct("slice_closing_radius", "slice_closing_radius");
+    m.boolean("reduce_crossing_wall", "avoid_crossing_perimeters");
+    m.direct("ironing_speed", "ironing_speed");
+    m.direct("ironing_spacing", "ironing_spacing");
+    m.direct("ironing_flow", "ironing_flowrate");
+    if (const std::string* seq = find(foreign, "print_sequence")) {
+        m.emit("complete_objects", *seq == "by object" ? "1" : "0");
+    }
 
     return out;
 }
