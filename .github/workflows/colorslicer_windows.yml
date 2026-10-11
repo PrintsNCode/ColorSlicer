@@ -1,0 +1,96 @@
+name: ColorSlicer Windows
+
+# Builds ColorSlicer for Windows x64 on GitHub's own runners and packs a portable .zip.
+# The first run builds all dependencies (about 2-3 hours); later runs reuse the cache
+# and only build ColorSlicer (about 30-60 minutes).
+#
+# Run it by hand: Actions -> "ColorSlicer Windows" -> Run workflow.
+# Pushing a tag like v3.0.0-alpha12-colorslicer.2 also attaches the .zip to that Release.
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - 'v*-colorslicer*'
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    timeout-minutes: 350
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: CMake 3.27.9
+        uses: jwlawson/actions-setup-cmake@v2
+        with:
+          cmake-version: '3.27.9'
+
+      - name: Restore dependencies cache
+        id: deps-cache
+        uses: actions/cache@v4
+        with:
+          path: deps/build/destdir
+          key: deps-win-x64-release-${{ hashFiles('deps/**') }}
+
+      - name: Build dependencies (only when not cached)
+        if: steps.deps-cache.outputs.cache-hit != 'true'
+        shell: cmd
+        run: |
+          cmake -S deps -B deps/build -G "Visual Studio 17 2022" -A x64 -DDEP_DEBUG=OFF
+          if errorlevel 1 exit /b 1
+          cmake --build deps/build --config Release --parallel
+          if errorlevel 1 exit /b 1
+
+      - name: Configure ColorSlicer
+        shell: cmd
+        run: >
+          cmake -S . -B build -G "Visual Studio 17 2022" -A x64
+          -DSLIC3R_BUILD_TESTS=OFF
+          -DSLIC3R_RELEASE_DEBUG_SYMBOLS=OFF
+          -DCMAKE_PREFIX_PATH="%CD%/deps/build/destdir/usr/local"
+
+      - name: Build ColorSlicer
+        shell: cmd
+        run: cmake --build build --config Release --parallel
+
+      - name: Pack portable zip
+        shell: pwsh
+        run: |
+          $launcher = Get-ChildItem -Path build -Recurse -Filter 'slic3r-app-launcher.exe' |
+              Where-Object { $_.FullName -match 'Release' } | Select-Object -First 1
+          if (-not $launcher) { throw 'slic3r-app-launcher.exe not found' }
+          $src = $launcher.Directory.FullName
+          Write-Host "Build output: $src"
+          Get-ChildItem $src | Format-Table Name, Length
+
+          $out = 'dist/ColorSlicer'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          # Executables and DLLs next to each other
+          Get-ChildItem $src -File | Where-Object { $_.Extension -in '.exe', '.dll' } |
+              Copy-Item -Destination $out
+          Rename-Item "$out/slic3r-app-launcher.exe" 'ColorSlicer.exe'
+          # The build tree only has a junction to resources: copy the real files
+          Copy-Item -Recurse -Force resources "$out/resources"
+          Copy-Item LICENSE, README.md $out
+          Get-ChildItem $out | Format-Table Name, Length
+
+          $name = "ColorSlicer-windows-x64-${{ github.ref_name }}.zip"
+          Compress-Archive -Path "$out/*" -DestinationPath "dist/$name"
+          "ZIP_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload zip as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ColorSlicer-windows-x64
+          path: dist/${{ env.ZIP_NAME }}
+          if-no-files-found: error
+
+      - name: Attach zip to the Release (tags only)
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/${{ env.ZIP_NAME }}

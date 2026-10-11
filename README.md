@@ -3,7 +3,13 @@
 A fork of [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) 3.0.0-alpha12 that keeps **colors** and
 **print settings** when you open a 3MF written by another application, and **colors** from OBJ files.
 
-**Download:** see the [Releases page](https://github.com/PrintsNCode/ColorSlicer/releases) (macOS, Apple Silicon).
+## Download
+
+| Platform | Download | Install guide |
+|---|---|---|
+| **macOS** (Apple Silicon) | `.dmg` from the [Releases page](https://github.com/PrintsNCode/ColorSlicer/releases) | [macOS app and disk image](#macos-app-and-disk-image) below |
+| **Windows** (64-bit) | `.zip` from the [Releases page](https://github.com/PrintsNCode/ColorSlicer/releases) | **[README-Windows.md](README-Windows.md)** (download, GitHub build, or build from a clean PC) |
+
 The original PrusaSlicer README is in [README-PrusaSlicer.md](README-PrusaSlicer.md).
 
 > ColorSlicer is an independent, unofficial project, **not affiliated with or endorsed by Prusa Research**.
@@ -132,6 +138,9 @@ cmake --build build -j4
 ```
 
 `--datadir` keeps the test configuration apart from an existing PrusaSlicer installation.
+
+**Windows:** step by step from a PC with nothing installed in [README-Windows.md](README-Windows.md); the
+workflow [`colorslicer_windows.yml`](.github/workflows/colorslicer_windows.yml) builds the portable .zip on GitHub.
 
 ### macOS app and disk image
 
