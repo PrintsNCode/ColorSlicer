@@ -18,6 +18,7 @@
 #include "Slic3r/Biz/Format/ResultLoad3mf.hpp"
 #include "Slic3r/Biz/Utils/XmlEscape.hpp"
 #include "Slic3r/Biz/Format/3mf/LegacyPaintingCompat.hpp"
+#include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
 
 #include "Slic3r/Time.hpp" // utc_timestamp
 #include "LocalesUtils.hpp" // CNumericLocalesSetter
@@ -44,6 +45,7 @@ using ModelVolumePtrs = Slic3r::Domain::ModelVolumePtrs;
 using namespace Slic3r;
 using namespace format_3MF;
 using TriangleMesh = Slic3r::Domain::TriangleMesh;
+namespace ColorImport = Slic3r::Biz::Format::ColorImport;
 
 /// <summary>
 /// Since C++17, the best way to keep string literal is:
@@ -78,6 +80,7 @@ constexpr const char *RECOMMENDED_EXTENSION_ATTR = "recommendedextensions";
 constexpr const char *XMLNS_VALUE =            "http://schemas.microsoft.com/3dmanufacturing/core/2015/02";
 constexpr const char *XMLNS_PRODUCTION_VALUE = "http://schemas.microsoft.com/3dmanufacturing/production/2015/06";
 constexpr const char *XMLNS_MIRRORMESH_VALUE = "http://schemas.microsoft.com/3dmanufacturing/mirroring/2021/07";
+constexpr const char *XMLNS_MATERIAL_VALUE =   "http://schemas.microsoft.com/3dmanufacturing/material/2015/02";
 constexpr const char *XMLNS_SLIC3R_VALUE =     "http://schemas.slic3r.org/3mf/2017/06"; // slic3rpe: prefix, also written when dual-writing MM segmentation for 2.x readers
 
 // model nodes
@@ -93,6 +96,15 @@ constexpr const char *PRESERVE_ATTR = "preserve";
 // resources nodes
 constexpr const char *BASEMATERIALS_TAG = "basematerials";
 constexpr const char *OBJECT_TAG = "object";
+
+// basematerials nodes and attributes
+constexpr const char *BASE_TAG = "base";
+constexpr const char *DISPLAYCOLOR_ATTR = "displaycolor";
+
+// Materials extension (colorgroup) nodes and attributes, tags are prefixed by Model::material_ns
+constexpr const char *COLORGROUP_TAG = "colorgroup";
+constexpr const char *COLOR_TAG = "color";
+constexpr const char *COLOR_ATTR = "color";
 
 // Build node
 constexpr const char *ITEM_TAG = "item";
@@ -135,6 +147,12 @@ constexpr const char *TRIANGLE_TAG = "triangle";
 constexpr const char *V1_ATTR = "v1";
 constexpr const char *V2_ATTR = "v2";
 constexpr const char *V3_ATTR = "v3";
+// Properties of triangle (3MF core specification)
+constexpr const char *P1_ATTR = "p1";
+constexpr const char *P2_ATTR = "p2";
+constexpr const char *P3_ATTR = "p3";
+// Painting state of triangle written by BambuStudio and OrcaSlicer
+constexpr const char *PAINT_COLOR_ATTR = "paint_color";
 
 constexpr const char *TRIANGLESETS_TAG = "t:trianglesets";
 constexpr const char *MIRRORMESH_TAG = "mm:mirrormesh";
@@ -173,6 +191,8 @@ start,
   metadata,
   resources,
    basematerials,
+   colorgroup,
+    material_item, // <base> inside of <basematerials> or <m:color> inside of <m:colorgroup>
    object,
     metadatagroup,
     mesh,
@@ -306,9 +326,22 @@ bool parse_id(const XML_Char *id_str, ST_ResourceID& id) {
     return true;
 }
 
+// The triangle that is being parsed is the last one of its.indices (it was just appended).
+// Properties are stored sparsely: the vector only grows when some triangle has a property.
+format_3MF::CT_TriangleProps& current_triangle_props(format_3MF::CT_Mesh& mesh) {
+    mesh.triangle_props.resize(mesh.its.indices.size());
+    return mesh.triangle_props.back();
+}
+
+std::string& current_triangle_paint_color(format_3MF::CT_Mesh& mesh) {
+    mesh.paint_colors.resize(mesh.its.indices.size());
+    return mesh.paint_colors.back();
+}
+
 constexpr const char *v123 = "123";
 void process_triangle_atts(LoadedModelFile &model, const XML_Char **atts, int num_atts, Read3mfIssues& collected_issues){
-    std::vector<Domain::Index3>& triangles = model.model->resource.objects.back().mesh.its.indices;
+    format_3MF::CT_Mesh& mesh = model.model->resource.objects.back().mesh;
+    std::vector<Domain::Index3>& triangles = mesh.its.indices;
     triangles.emplace_back();
     Domain::Index3 &triangle = triangles.back();
     for (int a = 0, i = 0; a < num_atts; a += 2, ++i) {
@@ -328,6 +361,20 @@ void process_triangle_atts(LoadedModelFile &model, const XML_Char **atts, int nu
             } else if (::strcmp(name, Legacy::MM_SEGMENTATION_ATTR) == 0) {
                 // Dual-written for 2.x readers (see store_meshes()). This reader gets the
                 // same data from Metadata/Slic3r_facets_annotation.json, so just ignore it here.
+            } else if (::strcmp(name, PID_ATTR) == 0) {
+                const int pid = parse_int(value);
+                if (pid > 0)
+                    current_triangle_props(mesh).pid = static_cast<format_3MF::ST_ResourceID>(pid);
+            } else if (::strcmp(name, P1_ATTR) == 0) {
+                current_triangle_props(mesh).p1 = parse_int(value);
+            } else if (::strcmp(name, P2_ATTR) == 0) {
+                current_triangle_props(mesh).p2 = parse_int(value);
+            } else if (::strcmp(name, P3_ATTR) == 0) {
+                current_triangle_props(mesh).p3 = parse_int(value);
+            } else if (::strcmp(name, PAINT_COLOR_ATTR) == 0) {
+                // Written by BambuStudio and OrcaSlicer, same format as PrusaSlicer MM painting.
+                if (value != nullptr && value[0] != '\0')
+                    current_triangle_paint_color(mesh) = value;
             } else {
                 collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::model_triangle_unknown_attr,
                     std::string(name), std::string(value)));
@@ -415,6 +462,10 @@ void process_model_attr(LoadedModelFile &model, const Attributes &attributes, Re
                 // Define namespace prefix for production extension
                 // used in required and recomended sets + attributes defined by extension
                 model.model->mirror_ns = xml_ns;
+                continue;
+            } else if (::strcmp(attr.value, XMLNS_MATERIAL_VALUE) == 0) {
+                // Define namespace prefix for materials extension (colorgroup)
+                model.model->material_ns = xml_ns;
                 continue;
             }
             collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::model_unknown_namespace, attr.value, xml_ns));
@@ -546,6 +597,51 @@ void process_object_attr(LoadedModelFile &model, const Attributes &attributes, R
 
     if (!has_attribute_id)
         collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::model_object_require_id_attr));
+}
+
+// Starts a new group of properties from <basematerials> or <m:colorgroup>.
+// Both are only interesting for the id and for the colors listed inside.
+void process_property_group_attr(LoadedModelFile &model, const Attributes &attributes) {
+    format_3MF::CT_BaseMaterials &groups = model.model->resource.base_materials;
+    groups.emplace_back();
+    format_3MF::CT_BaseMaterial &group = groups.back();
+    for (const Attribute &attr : attributes) {
+        if (::strcmp(attr.name, ID_ATTR) == 0) {
+            ST_ResourceID id = 0;
+            if (parse_id(attr.value, id))
+                group.id = id;
+            // An invalid id keeps 0, so no triangle or object can ever reference this group.
+        } else {
+            // The other attributes (displaypropertiesid, ...) are not needed.
+            group.any_attr.emplace_back(std::string(attr.name), std::string(attr.value));
+        }
+    }
+}
+
+// Reads <base name=".." displaycolor="#RRGGBB"/> of <basematerials>
+// or <m:color color="#RRGGBB"/> of <m:colorgroup>.
+void process_property_item_attr(
+    LoadedModelFile &model, const Attributes &attributes, const char *color_attr_name
+) {
+    format_3MF::CT_BaseMaterials &groups = model.model->resource.base_materials;
+    assert(!groups.empty());
+    if (groups.empty())
+        return;
+
+    format_3MF::CT_Bases &bases = groups.back().base;
+    bases.emplace_back();
+    format_3MF::CT_Base &base = bases.back();
+    for (const Attribute &attr : attributes) {
+        if (::strcmp(attr.name, NAME_ATTR) == 0) {
+            base.name = attr.value;
+        } else if (::strcmp(attr.name, color_attr_name) == 0) {
+            // An invalid color keeps the default (opaque black).
+            if (const std::optional<ColorImport::Rgba> color = ColorImport::parse_color(attr.value))
+                base.display_color = {color->r, color->g, color->b, color->a};
+        } else {
+            base.any_attr.emplace_back(std::string(attr.name), std::string(attr.value));
+        }
+    }
 }
 
 void process_mirror_attr(LoadedModelFile &model, const Attributes &attributes, Read3mfIssues& collected_issues) {
@@ -835,10 +931,32 @@ void XMLCALL start_element_handler(void *user_data, const XML_Char *name, const 
         if (::strcmp(name,    OBJECT_TAG) == 0) {
             state = XmlState::object;
             process_object_attr(model, attributes, context.collected_issues);
-        //} else if (::strcmp(  BASEMATERIALS_TAG, name) == 0) {
-        //    state = XmlState::basematerials;
+        } else if (::strcmp(  BASEMATERIALS_TAG, name) == 0) {
+            state = XmlState::basematerials;
+            process_property_group_attr(model, attributes);
+        } else if (!model.model->material_ns.empty() &&
+            ::strcmp((model.model->material_ns + ':' + COLORGROUP_TAG).c_str(), name) == 0) {
+            state = XmlState::colorgroup;
+            process_property_group_attr(model, attributes);
         } else {
             start_unknown_tag(context, Read3mfIssueType::model_resources_unknown_tag, name, attributes);
+        }
+        break;
+    case XmlState::basematerials:
+        if (::strcmp(name,    BASE_TAG) == 0) {
+            state = XmlState::material_item;
+            process_property_item_attr(model, attributes, DISPLAYCOLOR_ATTR);
+        } else {
+            start_unknown_tag(context, Read3mfIssueType::model_resources_unknown_tag, name, attributes, false);
+        }
+        break;
+    case XmlState::colorgroup:
+        if (!model.model->material_ns.empty() &&
+            ::strcmp((model.model->material_ns + ':' + COLOR_TAG).c_str(), name) == 0) {
+            state = XmlState::material_item;
+            process_property_item_attr(model, attributes, COLOR_ATTR);
+        } else {
+            start_unknown_tag(context, Read3mfIssueType::model_resources_unknown_tag, name, attributes, false);
         }
         break;
     case XmlState::object:
@@ -900,6 +1018,7 @@ void XMLCALL start_element_handler(void *user_data, const XML_Char *name, const 
         // common states is proccess by start_vertices_handler
         start_unknown_tag(context, Read3mfIssueType::model_vertices_unknown_tag, name, attributes, false);
         break;
+    case XmlState::material_item: [[fallthrough]];
     case XmlState::triangle: [[fallthrough]];
     case XmlState::vertex: [[fallthrough]];
     case XmlState::metadata:
@@ -982,6 +1101,11 @@ void XMLCALL end_element_handler(void *user_data, const XML_Char *name) {
     case XmlState::model:        state = XmlState::finished;  assert(::strcmp(name, MODEL_TAG) == 0);         break;
     case XmlState::resources:    state = XmlState::model;     assert(::strcmp(name, RESOURCES_TAG) == 0);     break;
     case XmlState::basematerials:state = XmlState::resources; assert(::strcmp(name, BASEMATERIALS_TAG) == 0); break;
+    case XmlState::colorgroup:   state = XmlState::resources; assert(boost::ends_with(name, COLORGROUP_TAG));    break;
+    case XmlState::material_item:
+        // <base> belongs to <basematerials>, <m:color> to <m:colorgroup>
+        state = ::strcmp(name, BASE_TAG) == 0 ? XmlState::basematerials : XmlState::colorgroup;
+        break;
     case XmlState::object:       state = XmlState::resources; assert(::strcmp(name, OBJECT_TAG) == 0);        break;
     case XmlState::metadatagroup:state = XmlState::object;    assert(::strcmp(name, METADATAGROUP_TAG) == 0); break;
     case XmlState::mesh:         state = XmlState::object;    assert(::strcmp(name, MESH_TAG) == 0);          break;

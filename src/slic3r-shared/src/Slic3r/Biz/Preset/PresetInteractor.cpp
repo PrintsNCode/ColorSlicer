@@ -851,10 +851,9 @@ PresetInteractorConfigContainerContext& PresetInteractor::initialize_config_cont
     return it->second;
 }
 
-void PresetInteractor::initialize_config_container_with_default(Domain::ConfigContainer& cc)
+void PresetInteractor::initialize_config_container_with_default(Domain::ConfigContainer& cc, const std::string& printer_name)
 {
-    const static std::string selected_printer_name =
-        "Prusa CORE One"; //"SL1S SPEED";//"Prusa MK4S";
+    const std::string selected_printer_name = printer_name.empty() ? std::string("Prusa CORE One") : printer_name;
     const auto& preset_bundle     = m_workbench.preset_bundle();
 
     std::vector<PresetItem> items;
@@ -873,14 +872,34 @@ void PresetInteractor::initialize_config_container_with_default(Domain::ConfigCo
 
     ASSERT(items.size() > 0);
 
-    auto filter_pred = [](const PresetItem& p)
+    auto filter_pred = [&selected_printer_name](const PresetItem& p)
     {
         return p.hw_printer_config_name.starts_with(selected_printer_name)
             && p.origin == Domain::Preset::PresetOrigin::System;
     };
     auto filtered_range = items | std::views::filter(filter_pred);
     auto it = std::ranges::min_element(filtered_range, {}, sort_key);
-    const PresetItem p  = it == std::ranges::end(filtered_range) ? items.front() : *it;
+    PresetItem p  = it == std::ranges::end(filtered_range) ? items.front() : *it;
+
+    if (!printer_name.empty()) {
+        // Several colors: take the variant of that printer with the most material slots.
+        size_t best_slots = 0;
+        bool found        = false;
+        for (const auto& ep : preset_bundle.evaluated_presets | std::views::values | std::views::join) {
+            if (ep.preset.origin != Domain::Preset::PresetOrigin::System)
+                continue;
+            const std::string& hw_name = m_use_hw_config_short_name ? ep.hw_config.short_name : ep.hw_config.name;
+            if (!hw_name.starts_with(selected_printer_name))
+                continue;
+            const size_t slots = ep.hw_config.material_slot_count();
+            if (!found || slots > best_slots) {
+                found      = true;
+                best_slots = slots;
+                p.hw_printer_config_id = ep.hw_config.id;
+                p.id                   = ep.preset.id;
+            }
+        }
+    }
 
     InvokeLaterBag bag;
     fill_config_container_with_selected_preset(cc, p.hw_printer_config_id, p.id, false, bag);

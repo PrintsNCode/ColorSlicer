@@ -11,17 +11,25 @@
 #include "Slic3r/Biz/Algorithms/TriangleMesh.hpp"
 #include "objparser.hpp"
 
+#include <boost/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
+#include <iterator>
+
 namespace Slic3r::Biz {
 
+namespace {
 
-tl::expected<Domain::TriangleMesh, std::string> load_obj(const std::string& path)
-{    
-    // Parse the OBJ file.
-    ObjParser::ObjData data;
-    if (! ObjParser::objparse(path.c_str(), data)) {
-        return tl::make_unexpected(fmt::format("load_obj: failed to parse {}.", path));
-    }
-    
+struct ConvertedObj
+{
+    Domain::TriangleMesh mesh;
+    /// For every triangle of mesh: index of the face of the file it comes from.
+    std::vector<std::size_t> face_of_triangle;
+};
+
+tl::expected<ConvertedObj, std::string> convert_obj(const ObjParser::ObjData& data, const std::string& path)
+{
+    std::vector<std::size_t> face_of_triangle;
+    std::size_t face_index = 0;
     // Count the faces and verify, that all faces are triangular.
     size_t num_faces = 0;
     size_t num_quads = 0;
@@ -73,8 +81,12 @@ tl::expected<Domain::TriangleMesh, std::string> load_obj(const std::string& path
                 assert(cnt == 3 || cnt == 4);
                 // Insert one or two faces (triangulate a quad).
                 its.indices.push_back(Domain::Index3{indices[0], indices[1], indices[2]});
-                if (cnt == 4)
+                face_of_triangle.push_back(face_index);
+                if (cnt == 4) {
                     its.indices.push_back(Domain::Index3{indices[0], indices[2], indices[3]});
+                    face_of_triangle.push_back(face_index);
+                }
+                ++ face_index;
             }
         }
 
@@ -85,7 +97,62 @@ tl::expected<Domain::TriangleMesh, std::string> load_obj(const std::string& path
     }
     if (mesh_out.volume() < 0)
         mesh_out.flip_triangles();
-    return mesh_out;
+    return ConvertedObj{std::move(mesh_out), std::move(face_of_triangle)};
+}
+
+} // namespace
+
+tl::expected<Domain::TriangleMesh, std::string> load_obj(const std::string& path)
+{
+    // Parse the OBJ file.
+    ObjParser::ObjData data;
+    if (! ObjParser::objparse(path.c_str(), data)) {
+        return tl::make_unexpected(fmt::format("load_obj: failed to parse {}.", path));
+    }
+
+    auto converted = convert_obj(data, path);
+    if (!converted)
+        return tl::make_unexpected(converted.error());
+    return std::move(converted->mesh);
+}
+
+tl::expected<LoadedObj, std::string> load_obj_colored(const std::string& path)
+{
+    ObjParser::ObjData data;
+    if (! ObjParser::objparse(path.c_str(), data)) {
+        return tl::make_unexpected(fmt::format("load_obj: failed to parse {}.", path));
+    }
+
+    auto converted = convert_obj(data, path);
+    if (!converted)
+        return tl::make_unexpected(converted.error());
+
+    LoadedObj result{std::move(converted->mesh), std::nullopt};
+
+    const boost::filesystem::path directory = boost::filesystem::path(path).parent_path();
+    const auto read_mtl = [&directory](const std::string& name) -> std::optional<std::string> {
+        if (name.empty())
+            return std::nullopt;
+        boost::system::error_code ec;
+        const boost::filesystem::path mtl_path = directory / boost::filesystem::path(name);
+        if (!boost::filesystem::is_regular_file(mtl_path, ec))
+            return std::nullopt;
+        boost::nowide::ifstream file(mtl_path.string(), std::ios::in | std::ios::binary);
+        if (!file)
+            return std::nullopt;
+        return std::string(std::istreambuf_iterator<char>(file), std::istreambuf_iterator<char>());
+    };
+
+    std::optional<Format::ObjColors::Coloring> faces = Format::ObjColors::color_faces(data, read_mtl);
+    if (faces.has_value() && result.mesh.facets_count() == converted->face_of_triangle.size()) {
+        Format::ObjColors::Coloring coloring;
+        coloring.colors = std::move(faces->colors);
+        coloring.face_state.reserve(converted->face_of_triangle.size());
+        for (const std::size_t face : converted->face_of_triangle)
+            coloring.face_state.push_back(face < faces->face_state.size() ? faces->face_state[face] : 0u);
+        result.coloring = std::move(coloring);
+    }
+    return result;
 }
 
 bool store_obj(const std::string& path, const Domain::TriangleMesh& mesh)

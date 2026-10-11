@@ -1,3 +1,4 @@
+#include "Slic3r/Biz/Format/3mf/ForeignPrint.hpp"
 #include "Slic3r/Biz/Format/3mf.hpp"
 
 #include <memory>
@@ -11,6 +12,8 @@
 // #include "3mf/BuildTicket.hpp"
 #include "3mf/ModelMap.hpp"
 #include "3mf/PrusaFile.hpp"
+#include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
+#include "3mf/ForeignConfig.hpp"
 
 #include <boost/uuid/uuid_io.hpp> // to_string(uuid)
 #include <boost/uuid/uuid_generators.hpp> // generators
@@ -343,8 +346,242 @@ bool process_object_with_components(
     return true;
 }
 
+
+///////////////////////////////////////////////
+///// COLORS OF FOREIGN FILES ////////////////
+
+namespace ColorImport  = Slic3r::Biz::Format::ColorImport;
+namespace ForeignConfig = Slic3r::Biz::Format::ForeignConfig;
+
+/// <summary>
+/// Collects colors of 3mf written by other applications.
+/// All colors of the file form one palette: color i of the palette is the state i + 1 of the painting
+/// (and the extruder i + 1 of a volume) in the loaded model.
+/// The application maps palette to real extruders afterwards, because only it knows the printer.
+/// </summary>
+struct ColorImportState
+{
+    // Off for PrusaSlicer projects: they keep their own extruders and painting.
+    bool enabled = false;
+    // File written by BambuStudio / OrcaSlicer: filament n of the file is the state n of the palette.
+    bool bambu = false;
+    ForeignConfig::BambuColors config;
+
+    std::vector<ColorImport::Rgba> colors;
+
+    bool multi_filament() const { return bambu && config.filament_colors.size() > 1; }
+
+    // State (1-based) of the color from a material, the color is added to the palette when it is new.
+    unsigned state_of(const ColorImport::Rgba& color)
+    {
+        const std::uint32_t key = (std::uint32_t(color.r) << 16) | (std::uint32_t(color.g) << 8) | color.b;
+        if (const auto it = index_by_rgb.find(key); it != index_by_rgb.end())
+            return unsigned(it->second + 1);
+
+        if (colors.size() >= ColorImport::MAX_TRIANGLE_STATE)
+            return unsigned(ColorImport::nearest_index(color, colors) + 1);
+
+        index_by_rgb.emplace(key, colors.size());
+        colors.push_back(color);
+        return unsigned(colors.size());
+    }
+
+private:
+    std::unordered_map<std::uint32_t, size_t> index_by_rgb;
+};
+
+const CT_Base* find_material(const CT_BaseMaterials& groups, const ST_ResourceID pid, const long long index)
+{
+    if (pid == 0 || index < 0)
+        return nullptr;
+    for (const CT_BaseMaterial& group : groups)
+        if (group.id == pid)
+            return static_cast<size_t>(index) < group.base.size() ? &group.base[size_t(index)] : nullptr;
+    return nullptr;
+}
+
+void set_volume_extruder(ModelVolume& volume, const unsigned extruder)
+{
+    volume.volume_settings.overrides.set("extruder", static_cast<int>(extruder));
+}
+
+// Writes strings (empty = not painted) into painting of the volume.
+void paint_from_strings(
+    ModelVolume& volume, const std::vector<std::string>& strings, const size_t triangle_count
+)
+{
+    auto& facets = volume.mm_segmentation_facets;
+    facets.reserve(static_cast<int>(triangle_count));
+    bool any = false;
+    for (size_t i = 0; i < strings.size() && i < triangle_count; ++i) {
+        if (strings[i].empty())
+            continue;
+        facets.set_triangle_from_string(static_cast<int>(i), strings[i]);
+        any = true;
+    }
+    facets.shrink_to_fit();
+    if (!any)
+        return;
+
+    // Unpainted triangles are not stored. They keep the state NONE (= extruder of the volume).
+    auto& splitting_data = facets.triangle_splitting_data;
+    if (splitting_data.triangles_to_split.size() < triangle_count)
+        splitting_data.used_states[static_cast<size_t>(Domain::TriangleSelector::TriangleStateType::NONE)] = true;
+}
+
+/// <summary>
+/// Translates colors of one 3mf mesh object into extruder and painting of its volume.
+///  - paint_color of BambuStudio / OrcaSlicer is taken as it is (states are filaments of the palette)
+///  - materials (pid, p1, pindex) of 3mf: the most used color becomes the extruder of the volume,
+///    triangles with another color are painted.
+/// </summary>
+void assign_colors(
+    const CT_Object& object_3mf,
+    const size_t triangle_count,
+    const CT_BaseMaterials& materials,
+    ColorImportState& color,
+    ModelVolume& volume
+)
+{
+    const CT_Mesh& mesh = object_3mf.mesh;
+
+    if (color.bambu) {
+        if (!color.multi_filament())
+            return;
+        paint_from_strings(volume, mesh.paint_colors, triangle_count);
+        if (const auto it = color.config.part_extruder.find(static_cast<int>(object_3mf.id));
+            it != color.config.part_extruder.end())
+            set_volume_extruder(volume, static_cast<unsigned>(it->second));
+        return;
+    }
+
+    if (materials.empty())
+        return;
+
+    // state of every triangle (0 = no color)
+    std::vector<unsigned> states(triangle_count, 0);
+    std::unordered_map<unsigned, size_t> histogram;
+    for (size_t i = 0; i < triangle_count; ++i) {
+        CT_TriangleProps props;
+        if (i < mesh.triangle_props.size())
+            props = mesh.triangle_props[i];
+
+        ST_ResourceID pid = props.pid;
+        long long index   = props.p1;
+        if (pid == 0 || index < 0) {
+            // no own color, the one of the object applies
+            pid   = object_3mf.pid;
+            index = static_cast<long long>(object_3mf.pindex);
+        }
+
+        if (const CT_Base* material = find_material(materials, pid, index)) {
+            const ST_ColorValue& rgba = material->display_color;
+            states[i]                 = color.state_of({rgba[0], rgba[1], rgba[2], rgba[3]});
+            ++histogram[states[i]];
+        }
+    }
+
+    if (histogram.empty())
+        return;
+
+    // The most used color is the color of the volume, ties are won by the smaller state.
+    unsigned main_state = 0;
+    size_t main_count   = 0;
+    for (const auto& [state, count] : histogram)
+        if (count > main_count || (count == main_count && state < main_state)) {
+            main_state = state;
+            main_count = count;
+        }
+
+    set_volume_extruder(volume, main_state);
+    if (histogram.size() == 1 && main_count == triangle_count)
+        return; // single colored volume
+
+    std::vector<std::string> strings(triangle_count);
+    for (size_t i = 0; i < triangle_count; ++i)
+        if (states[i] != 0 && states[i] != main_state)
+            strings[i] = ColorImport::encode_leaf_state(states[i]);
+    paint_from_strings(volume, strings, triangle_count);
+}
+
+/// <summary>
+/// Volumes of BambuStudio / OrcaSlicer files without their own extruder get the one of their object.
+/// </summary>
+void assign_object_extruders(const ColorImportState& color, const ModelMap& model_map)
+{
+    if (!color.multi_filament())
+        return;
+
+    for (const auto& [path_id, objects] : model_map.build) {
+        unsigned extruder = 1;
+        if (const auto it = color.config.object_extruder.find(static_cast<int>(path_id.id));
+            it != color.config.object_extruder.end())
+            extruder = static_cast<unsigned>(it->second);
+
+        for (ModelObject* object : objects)
+            for (ModelVolume* volume : object->volumes)
+                if (!volume->volume_settings.overrides.get("extruder").has_value())
+                    set_volume_extruder(*volume, extruder);
+    }
+}
+
+struct FileColors
+{
+    std::vector<ColorImport::Rgba> colors;
+    std::vector<bool> used;
+};
+
+/// <summary>
+/// Palette of the file and which of its colors the loaded model really uses.
+/// Empty when the model does not use any color.
+/// </summary>
+FileColors collect_used_colors(ColorImportState& color, const Domain::Model& model)
+{
+    std::vector<bool> used;
+    auto mark = [&used](const size_t state) {
+        if (state == 0)
+            return;
+        if (used.size() < state)
+            used.resize(state, false);
+        used[state - 1] = true;
+    };
+
+    for (const ModelObject* object : model.objects)
+        for (const ModelVolume* volume : object->volumes) {
+            if (const auto extruder = volume->volume_settings.overrides.get("extruder");
+                extruder.has_value() && extruder->get<int>() > 0)
+                mark(static_cast<size_t>(extruder->get<int>()));
+
+            const std::vector<bool>& states = volume->mm_segmentation_facets.get_data().used_states;
+            for (size_t state = 1; state < states.size(); ++state)
+                if (states[state])
+                    mark(state);
+        }
+
+    FileColors result;
+    if (used.empty())
+        return result;
+
+    // A file may use more filaments than it names colors for.
+    constexpr ColorImport::Rgba UNKNOWN_COLOR{128, 128, 128, 255};
+    if (color.colors.size() < used.size())
+        color.colors.resize(used.size(), UNKNOWN_COLOR);
+    used.resize(color.colors.size(), false);
+
+    result.colors = color.colors;
+    result.used   = std::move(used);
+    return result;
+}
+
 // Return true when processed otherwise false
-bool move_mesh(CT_Object& object_3mf, ModelObject& temp_object, ObjectMap& object_map, const std::string* path)
+bool move_mesh(
+    CT_Object& object_3mf,
+    ModelObject& temp_object,
+    ObjectMap& object_map,
+    const CT_BaseMaterials& materials,
+    ColorImportState& color,
+    const std::string* path
+)
 {
     // By 3mf core spec CT_Object should contain mesh OR components
     if (object_3mf.mesh.its.empty() && object_3mf.components.empty())
@@ -366,6 +603,7 @@ bool move_mesh(CT_Object& object_3mf, ModelObject& temp_object, ObjectMap& objec
             }
         }
 
+        const size_t triangle_count = its.indices.size();
         Domain::TriangleMeshStats stats = Biz::Algorithms::TriangleMesh::calculate_stats(
             object_3mf.mesh.its
         );
@@ -379,6 +617,9 @@ bool move_mesh(CT_Object& object_3mf, ModelObject& temp_object, ObjectMap& objec
 
         // copy name of volume
         vol->name = object_3mf.name;
+
+        if (color.enabled)
+            assign_colors(object_3mf, triangle_count, materials, color, *vol);
 
         PathId path_id{object_3mf.id, path ? *path : std::string()};
         // object id should be unique and not rewrite data in map
@@ -394,11 +635,15 @@ bool move_mesh(CT_Object& object_3mf, ModelObject& temp_object, ObjectMap& objec
 /// NOTE: objects_3mf is not const because mesh(indexed_triangle_set) is moved into temp_model!
 /// </summary>
 /// <param name="objects_3mf">Source object</param>
+/// <param name="materials">Material groups of the .model file the objects are from</param>
+/// <param name="color">Colors collected from the file</param>
 /// <param name="temp_model">Temporary storage for object</param>
 /// <param name="object_map">Conversion from object_3mf to Slic3r::ModelObject</param>
 /// <param name="path">For root .model it is null otherwise it contains .model path</param>
 /// <returns>Indices of not moved objects - not core 3mf</returns>
 std::vector<size_t> move_objects(/*const*/ CT_Objects& objects_3mf,
+                                 const CT_BaseMaterials& materials,
+                                 ColorImportState& color,
                                  Domain::Model& temp_model,
                                  ObjectMap& object_map,
                                  const std::string* path = nullptr)
@@ -414,7 +659,7 @@ std::vector<size_t> move_objects(/*const*/ CT_Objects& objects_3mf,
 
     for (CT_Object& object_3mf : objects_3mf) {
         // contain Object mesh?
-        if (move_mesh(object_3mf, temp_object, object_map, path))
+        if (move_mesh(object_3mf, temp_object, object_map, materials, color, path))
             continue;
 
         // contain Object componnets?
@@ -567,7 +812,8 @@ bool contain_producution_extension(const format_3MF::Model& model)
 /// <returns>Object instances, Index corespond to item in build</returns>
 ModelMap move_model(/*const*/ LoadedModel& from,
                     Slic3r::Domain::Model& to,
-                    Read3mfIssues& collected_issues)
+                    Read3mfIssues& collected_issues,
+                    ColorImportState& color)
 {
     format_3MF::Model& from_root = *from.model;
     // Keep first object as collector for all volumes(3mf object with geometry - without components)
@@ -582,6 +828,8 @@ ModelMap move_model(/*const*/ LoadedModel& from,
         for (auto& [path, sub_model] : from.sub_models) {
             std::vector<size_t> not_processed_objects = move_objects(
                 sub_model.resource.objects,
+                sub_model.resource.base_materials,
+                color,
                 temp_model,
                 object_map,
                 &path
@@ -594,6 +842,8 @@ ModelMap move_model(/*const*/ LoadedModel& from,
     }
     std::vector<size_t> not_processed_objects = move_objects(
         from_root.resource.objects,
+        from_root.resource.base_materials,
+        color,
         temp_model,
         object_map
     );
@@ -607,6 +857,7 @@ ModelMap move_model(/*const*/ LoadedModel& from,
 
     // fill build objects by object_map from temp_model
     model_map.volumes = fill_build_objects(model_map.build, object_map);
+    assign_object_extruders(color, model_map);
 
     // Add top most 3mf::object not referenced in build as invisible object into Slic3r::model
     add_nonprintable_objects(to, object_map);
@@ -674,13 +925,29 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
     ModelMap model_map;
     Domain::Model model;
 
+    // Colors are imported only from files of other applications. PrusaSlicer project keeps
+    // its extruders and painting in its own files.
+    ColorImportState color;
+    color.enabled = mz_zip_reader_locate_file(
+                        &archive,
+                        std::string{Biz::Format::ProjectFileConstants::PRUSA_PROJECT_FILEPATH}.c_str(),
+                        nullptr,
+                        0
+                    ) < 0;
+    if (color.enabled) {
+        color.config = ForeignConfig::read_bambu_colors(archive);
+        color.bambu  = color.config.has_model_settings || !color.config.filament_colors.empty();
+        if (color.bambu)
+            color.colors = color.config.filament_colors;
+    }
+
     if (!loaded_model.model.has_value()) {
         // model is not loaded
         // Is it necessary to do anything?
         // return set_result(model, filepath_3mf, std::move(result));
     } else {
         // When not PS 3mf convert model_3mf into model by general rules
-        model_map = move_model(loaded_model, model, collected_issues);
+        model_map = move_model(loaded_model, model, collected_issues, color);
 
         // Set the source file path for each loaded model object.
         const std::string fallback_name = boost::filesystem::path(filepath_3mf).stem().string();
@@ -755,6 +1022,13 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
     loaded_3mf.filepath_3mf           = filepath_3mf;
     loaded_3mf.config_containers_data = prusa_files_result.config_containers_data;
     loaded_3mf.issues_map             = std::move(collected_issues);
+
+    if (color.enabled) {
+        FileColors file_colors = collect_used_colors(color, loaded_3mf.model);
+        loaded_3mf.file_colors      = std::move(file_colors.colors);
+        loaded_3mf.file_colors_used = std::move(file_colors.used);
+        loaded_3mf.file_print_settings = Slic3r::Biz::Format::ForeignPrint::read_from_archive(archive);
+    }
 
     if (loaded_model.model) {
         const auto& meta = loaded_model.model->metadata;

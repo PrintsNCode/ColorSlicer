@@ -1113,6 +1113,10 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Format/3mf.cpp
         #src / Slic3r / Biz / Format / 3mf / BuildTicket.cpp
         #src / Slic3r / Biz / Format / 3mf / BuildTicket.hpp
+        include/Slic3r/Biz/Format/3mf/ColorImport.hpp
+        src/Slic3r/Biz/Format/3mf/ColorImport.cpp
+        src/Slic3r/Biz/Format/3mf/ForeignConfig.cpp
+        src/Slic3r/Biz/Format/3mf/ForeignConfig.hpp
         src/Slic3r/Biz/Format/3mf/Metadata.cpp
         src/Slic3r/Biz/Format/3mf/Model3mf.cpp
         src/Slic3r/Biz/Format/3mf/Model3mf.hpp
@@ -1122,6 +1126,9 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Format/3mf/Relations.cpp
         src/Slic3r/Biz/Format/3mf/Relations.hpp
         src/Slic3r/Biz/Format/3mf/ResultLoad3mf.cpp
+        include/Slic3r/Biz/Format/3mf/ForeignPrint.hpp
+        src/Slic3r/Biz/Format/3mf/ForeignPrint.cpp
+        src/Slic3r/Biz/Format/3mf/ForeignPrintApply.cpp
         include/Slic3r/Biz/Format/VirtualExtruder.hpp
         src/Slic3r/Biz/Format/VirtualExtruder.cpp
 
@@ -1137,6 +1144,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Format/SVG.cpp
         src/Slic3r/Biz/Format/OBJ.cpp
         include/Slic3r/Biz/Format/OBJ.hpp
+        src/Slic3r/Biz/Format/ObjColors.cpp
+        include/Slic3r/Biz/Format/ObjColors.hpp
         src/Slic3r/Biz/Format/objparser.cpp
         src/Slic3r/Biz/Format/objparser.hpp
         include/Slic3r/Biz/Format/STEP.hpp
@@ -1623,7 +1632,10 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/PresetUpdater/TestPresetUpdaterListener.cpp
 
             test/Slic3r/Biz/Format/3MFTests.cpp
+            test/Slic3r/Biz/Format/ColorImportTests.cpp
             test/Slic3r/Biz/Format/STEPTests.cpp
+            test/Slic3r/Biz/Format/ForeignPrintTests.cpp
+            test/Slic3r/Biz/Format/ObjColorsTests.cpp
 
             test/Slic3r/Biz/BundleCacheTests.cpp
 

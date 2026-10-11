@@ -2,6 +2,7 @@
 #include "Slic3r/Biz/Format/STL.hpp"
 #include "Slic3r/Biz/Format/SVG.hpp"
 #include "Slic3r/Biz/Format/OBJ.hpp"
+#include "Slic3r/Biz/Format/ObjColors.hpp"
 #include "Slic3r/Biz/Format/STEP.hpp"
 #include "Slic3r/Biz/Format/3mf.hpp"
 #include "Slic3r/Biz/Config/3mf_legacy.hpp"
@@ -13,6 +14,8 @@
 #include "Slic3r/Biz/Algorithms/ModelVolume.hpp"
 #include "Slic3r/Biz/Algorithms/Point.hpp"
 #include "Slic3r/Biz/Algorithms/VirtualExtruder.hpp"
+#include "Slic3r/Biz/Algorithms/TriangleSelector.hpp"
+#include "Slic3r/Domain/ConfigContainer.hpp"
 #include "Slic3r/Biz/Scene/Selection.hpp"
 #include "Slic3r/Biz/Preset/IO/PresetMetadataLegacyLoader.hpp"
 #include "Slic3r/Biz/Platform/IAppConfigProvider.hpp"
@@ -34,6 +37,7 @@
 #include "Slic3r/Biz/Config/ConfigLegacy.hpp"
 
 #include <algorithm>
+#include <map>
 #include <fmt/format.h>
 
 namespace Slic3r::Biz::FileLoadingLogic {
@@ -49,6 +53,10 @@ struct ReturnData
     std::optional<Domain::TriangleMesh> mesh;
     std::optional<Domain::Model> model;
     bool geometry_only_3mf = false;
+    // Colors of a 3MF written by another application, see Loaded3MF::file_colors.
+    std::vector<Format::ColorImport::Rgba> file_colors;
+    // Colors of an OBJ (vertex colors / materials). Turned into a painted model once the mesh is processed.
+    std::optional<Format::ObjColors::Coloring> obj_coloring;
 };
 
 struct FileLoadError
@@ -703,6 +711,77 @@ static std::string skipped_painting_warning_text(const Read3mfIssues& issues)
     );
 }
 
+// Model with one object of the mesh of an OBJ: the most used color is the extruder of the volume,
+// triangles with another color are painted. Color i of the file is painting state / extruder i + 1.
+static Domain::Model make_colored_obj_model(
+    const Domain::TriangleMesh& mesh,
+    const Format::ObjColors::Coloring& coloring,
+    const std::string& name,
+    const boost::filesystem::path& path
+)
+{
+    Domain::Model model;
+    Domain::ModelObject* object = model.add_object();
+    object->name                = name;
+    object->input_file          = path.string();
+    Domain::ModelVolume* volume = Biz::Algorithms::ModelObject::add_volume(object, mesh);
+
+    const std::vector<unsigned>& states = coloring.face_state;
+    std::map<unsigned, std::size_t> histogram;
+    for (const unsigned state : states)
+        if (state != 0)
+            ++histogram[state];
+
+    unsigned main_state      = 0;
+    std::size_t main_count   = 0;
+    for (const auto& [state, count] : histogram)
+        if (count > main_count) {
+            main_state = state;
+            main_count = count;
+        }
+    if (main_state == 0)
+        return model;
+
+    volume->volume_settings.overrides.set("extruder", static_cast<int>(main_state));
+    if (histogram.size() == 1 && main_count == states.size())
+        return model; // single colored
+
+    auto& facets = volume->mm_segmentation_facets;
+    facets.reserve(static_cast<int>(states.size()));
+    bool any = false;
+    for (std::size_t i = 0; i < states.size(); ++i) {
+        if (states[i] == 0 || states[i] == main_state)
+            continue;
+        facets.set_triangle_from_string(
+            static_cast<int>(i), Format::ColorImport::encode_leaf_state(states[i])
+        );
+        any = true;
+    }
+    facets.shrink_to_fit();
+    if (any) {
+        // Unpainted triangles are not stored. They keep the state NONE (= extruder of the volume).
+        auto& splitting_data = facets.triangle_splitting_data;
+        if (splitting_data.triangles_to_split.size() < states.size())
+            splitting_data.used_states[static_cast<size_t>(Domain::TriangleSelector::TriangleStateType::NONE)] = true;
+    }
+    return model;
+}
+
+std::optional<Domain::ImportedColors> peek_obj_colors(const boost::filesystem::path& file_path)
+{
+    if (!boost::algorithm::iends_with(file_path.string(), ".obj"))
+        return std::nullopt;
+    auto loaded = Biz::load_obj_colored(file_path.string());
+    if (!loaded || !loaded->coloring.has_value() || loaded->coloring->colors.size() < 2)
+        return std::nullopt;
+
+    Domain::ImportedColors imported;
+    for (const Format::ColorImport::Rgba& color : loaded->coloring->colors)
+        imported.hex_colors.push_back(Format::ColorImport::to_hex(color));
+    imported.used.assign(imported.hex_colors.size(), true);
+    return imported;
+}
+
 static tl::expected<ReturnData, FileLoadError> read_data_from_file(
     const boost::filesystem::path& input_file_path,
     IMessageDialogProvider* dialog_provider,
@@ -717,15 +796,26 @@ static tl::expected<ReturnData, FileLoadError> read_data_from_file(
     const bool is_svg = boost::algorithm::iends_with(path_str, ".svg");
     const bool is_step = boost::algorithm::iends_with(path_str, ".step") ||
                          boost::algorithm::iends_with(path_str, ".stp");
-    if (is_stl || is_obj) {
-        auto loaded_mesh = is_stl ? Biz::load_stl(path_str) : Biz::load_obj(path_str);
+    if (is_obj) {
+        auto loaded_obj = Biz::load_obj_colored(path_str);
+        if (!loaded_obj)
+            return tl::make_unexpected(FileLoadError::error(loaded_obj.error()));
+        ret.mesh = std::move(loaded_obj->mesh);
+        // A single color says nothing the extruder of the object doesn't: only files with several colors are painted.
+        if (loaded_obj->coloring.has_value() && loaded_obj->coloring->colors.size() >= 2)
+            ret.obj_coloring = std::move(loaded_obj->coloring);
+        return ret;
+    }
+    if (is_stl) {
+        auto loaded_mesh = Biz::load_stl(path_str);
         if (loaded_mesh) {
             Domain::TriangleMesh mesh = loaded_mesh.value();
             ret.mesh                  = mesh;
             return ret;
         }
         return tl::make_unexpected(FileLoadError::error(loaded_mesh.error()));
-    } else if (is_3mf) {
+    }
+    if (is_3mf) {
         try {
             Loaded3MF loaded_3mf = load_from_project(input_file_path, std::nullopt);
             if (loaded_3mf.model.objects.empty()) {
@@ -748,6 +838,7 @@ static tl::expected<ReturnData, FileLoadError> read_data_from_file(
 
             ret.model             = loaded_3mf.model;
             ret.geometry_only_3mf = true;
+            ret.file_colors       = std::move(loaded_3mf.file_colors);
             return ret;
         } catch (const Loaded3MFException& e) {
             return tl::make_unexpected(FileLoadError::error(
@@ -855,6 +946,14 @@ static tl::expected<ReturnData, FileLoadError> read_and_process_file(
             answer_convert_from_imperial_units,
             dialog_provider
         );
+        if (data.value().obj_coloring.has_value()) {
+            // OBJ with colors: from here on it is a painted model, like a 3MF written by another application.
+            ReturnData& result = data.value();
+            result.model       = make_colored_obj_model(*result.mesh, *result.obj_coloring, file_name, result.file_path);
+            result.file_colors = result.obj_coloring->colors;
+            result.mesh.reset();
+            result.obj_coloring.reset();
+        }
     } else {
         return tl::make_unexpected(FileLoadError::error(_u8L("There is no data for either the mesh or the model.")));
     }
@@ -977,15 +1076,43 @@ static Project convert_to_project(Loaded3MF&& loaded_3mf, IMessageDialogProvider
     if (loaded_3mf.config_containers_data.empty()) {
         // 3MF file with unavailable configuration (e.g. from BambuStudio, OrcaSlicer).
         // Load only the geometry.
+        const bool has_colors   = !loaded_3mf.file_colors.empty();
+        const bool has_settings = !loaded_3mf.file_print_settings.empty();
         if (dialog_provider) {
-            dialog_provider->show_info_dialog(
-                _u8L(
+            std::string message;
+            if (has_colors && has_settings)
+                message = _u8L(
+                    "The 3MF file does not contain PrusaSlicer configuration. "
+                    "Geometry, colors and print settings were loaded."
+                );
+            else if (has_settings)
+                message = _u8L(
+                    "The 3MF file does not contain PrusaSlicer configuration. "
+                    "Geometry and print settings were loaded."
+                );
+            else if (has_colors)
+                message = _u8L(
+                    "The 3MF file does not contain PrusaSlicer configuration. "
+                    "Only geometry and colors were loaded."
+                );
+            else
+                message = _u8L(
                     "The 3MF file does not contain PrusaSlicer configuration. "
                     "Only geometry was loaded."
-                ),
-                _u8L("Loading 3MF file")
-            );
+                );
+            dialog_provider->show_info_dialog(message, _u8L("Loading 3MF file"));
         }
+
+        if (has_colors) {
+            Domain::ImportedColors imported;
+            for (const Format::ColorImport::Rgba& color : loaded_3mf.file_colors)
+                imported.hex_colors.push_back(Format::ColorImport::to_hex(color));
+            imported.used = loaded_3mf.file_colors_used;
+            imported.used.resize(imported.hex_colors.size(), true);
+            project.imported_colors() = std::move(imported);
+        }
+
+        project.imported_print_settings() = loaded_3mf.file_print_settings;
 
         project.set_metadata(loaded_3mf.metadata);
         project.set_file_path(loaded_3mf.filepath_3mf);
@@ -1084,6 +1211,97 @@ Domain::Project load_file_as_project(
     return convert_to_project(std::move(loaded_3mf), dialog_provider);
 }
 
+void remap_model_extruders(Domain::Model& model, const std::vector<unsigned>& extruder_of_state)
+{
+    using Domain::TriangleSelector::TriangleStateType;
+
+    std::map<TriangleStateType, TriangleStateType> state_remap;
+    for (size_t i = 0; i < extruder_of_state.size(); ++i) {
+        const size_t from = i + 1;
+        const size_t to   = extruder_of_state[i];
+        if (from != to && from < Domain::TriangleSelector::TRIANGLE_STATE_TYPE_COUNT
+            && to < Domain::TriangleSelector::TRIANGLE_STATE_TYPE_COUNT)
+            state_remap.emplace(static_cast<TriangleStateType>(from), static_cast<TriangleStateType>(to));
+    }
+
+    for (ModelObject* object : model.objects) {
+        for (ModelVolume* volume : object->volumes) {
+            if (const std::optional<ConfigItem> extruder = volume->volume_settings.overrides.get("extruder");
+                extruder.has_value() && extruder->get<int>() >= 1
+                && static_cast<size_t>(extruder->get<int>()) <= extruder_of_state.size())
+                volume->volume_settings.overrides.set(
+                    "extruder",
+                    static_cast<int>(extruder_of_state[static_cast<size_t>(extruder->get<int>()) - 1])
+                );
+
+            if (state_remap.empty() || !volume->is_mm_painted())
+                continue;
+
+            Biz::Algorithms::TriangleSelector selector(volume->mesh());
+            selector.deserialize(volume->mm_segmentation_facets.get_data(), false);
+            selector.remap_states(state_remap);
+            volume->mm_segmentation_facets.set_data(selector.serialize());
+        }
+    }
+}
+
+std::vector<unsigned> map_colors_to_extruders(
+    const std::vector<Format::ColorImport::Rgba>& file_colors,
+    const std::vector<std::string>& target_hex_colors,
+    const std::size_t slot_count
+)
+{
+    std::vector<Format::ColorImport::Rgba> targets;
+    std::vector<unsigned> extruder_of_target;
+    for (size_t i = 0; i < target_hex_colors.size() && i < slot_count; ++i)
+        if (const auto color = Format::ColorImport::parse_color(target_hex_colors[i])) {
+            targets.push_back(*color);
+            extruder_of_target.push_back(static_cast<unsigned>(i + 1));
+        }
+
+    std::vector<unsigned> result(file_colors.size(), 1);
+    for (size_t i = 0; i < file_colors.size(); ++i)
+        result[i] = targets.empty() ?
+            static_cast<unsigned>(std::min<size_t>(i + 1, std::max<size_t>(slot_count, 1))) :
+            extruder_of_target[Format::ColorImport::nearest_index(file_colors[i], targets)];
+    return result;
+}
+
+void apply_imported_colors(Domain::Project& project, Domain::ConfigContainer& config_container)
+{
+    if (!project.imported_colors().has_value())
+        return;
+    const Domain::ImportedColors imported = std::move(*project.imported_colors());
+    project.imported_colors().reset();
+
+    if (config_container.print_technology() != Domain::PrinterTechnology::FFF)
+        return;
+
+    std::vector<Format::ColorImport::Rgba> file_colors;
+    for (const std::string& hex : imported.hex_colors)
+        file_colors.push_back(Format::ColorImport::parse_color(hex).value_or(Format::ColorImport::Rgba{}));
+
+    const size_t slot_count = std::max<size_t>(
+        static_cast<size_t>(std::max<int>(config_container.selected_preset().hw_config.material_slot_count(), 0)),
+        1
+    );
+    const Format::ColorImport::ExtruderPlan plan =
+        Format::ColorImport::plan_extruders(file_colors, imported.used, slot_count);
+    if (plan.extruder_colors.empty())
+        return;
+
+    ConfigItem* colour_item = config_container.project_settings().items.find("extruder_colour");
+    if (ConfigItem* item = colour_item) {
+        std::vector<std::string> colors = item->get<std::vector<std::string>>();
+        colors.resize(std::max(colors.size(), plan.extruder_colors.size()));
+        for (size_t i = 0; i < plan.extruder_colors.size(); ++i)
+            colors[i] = Format::ColorImport::to_hex(plan.extruder_colors[i]);
+        item->set(colors);
+    }
+
+    remap_model_extruders(project.model(), plan.extruder_of_file_color);
+}
+
 namespace {
 std::optional<ModelVolume::Source> volume_source_from_path(const boost::filesystem::path& file_path)
 {
@@ -1100,7 +1318,8 @@ ImportToSceneResult import_files_and_add_to_scene(
     int tool_count,
     Scene::SceneInteractor& scene_interactor,
     const Domain::Vec2d& bed_center,
-    IMessageDialogProvider* dialog_provider
+    IMessageDialogProvider* dialog_provider,
+    const std::vector<std::string>& extruder_colors
 )
 {
     auto data = Biz::FileLoadingLogic::import_files(file_paths, dialog_provider, tool_count);
@@ -1122,6 +1341,15 @@ ImportToSceneResult import_files_and_add_to_scene(
             );
         } else if (file_data.model) {
             Domain::Model& model = file_data.model.value();
+            if (!file_data.file_colors.empty())
+                remap_model_extruders(
+                    model,
+                    map_colors_to_extruders(
+                        file_data.file_colors,
+                        extruder_colors,
+                        static_cast<std::size_t>(std::max(tool_count, 1))
+                    )
+                );
             if (model.objects.size() == 1 && model.objects.front()->instances.empty()) {
                 Domain::ModelObject* multi_part_object = model.objects.front();
                 // add a default instance and center object around origin

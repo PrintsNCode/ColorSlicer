@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 
+#include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
 #include "Slic3r/Biz/VirtualExtrudersConfig.hpp"
 #include "Slic3r/Domain/ConfigPack.hpp"
 #include "Slic3r/Domain/Model.hpp"
@@ -292,6 +293,15 @@ struct Loaded3MF {
     std::vector<Loaded3MF::ConfigContainerData> config_containers_data;
     Read3mfIssues issues_map;
     boost::optional<Slic3r::Semver> version;
+    // Print settings of a file written by another slicer (PrusaSlicer key, value).
+    std::vector<std::pair<std::string, std::string>> file_print_settings;
+
+    /// Colors of a file written by another application (empty when it has none, or for a PrusaSlicer project).
+    /// Color i is the state i + 1 of painting and the extruder i + 1 in `model`, which is how the file refers to it.
+    /// It is up to the application to map them to the extruders of the printer.
+    std::vector<Biz::Format::ColorImport::Rgba> file_colors;
+    /// Same size as file_colors. Which of the colors the model really uses.
+    std::vector<bool> file_colors_used;
 };
 
 

@@ -1,3 +1,4 @@
+#include "Slic3r/Biz/Format/3mf/ForeignPrint.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 
 #include <Slic3r/Assert.hpp>
@@ -166,7 +167,8 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
         return tl::unexpected<std::string>{description};
     };
 
-    if (project.config_containers().empty() && project.model().objects.empty()) {
+    if (project.config_containers().empty() && project.model().objects.empty()
+        && !project.imported_colors().has_value()) {
         return report_error(Biz::_u8L("Loading file failed: The loaded project is empty."));
     }
 
@@ -197,7 +199,28 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
         if (added_project.config_containers().empty()) {
             added_project.config_containers().emplace_back(std::make_unique<ConfigContainer>());
             ConfigContainer* config_container = added_project.config_containers().back().get();
-            m_preset_interactor.initialize_config_container_with_default(*config_container);
+            const bool many_colors = added_project.imported_colors().has_value()
+                && std::count(added_project.imported_colors()->used.begin(), added_project.imported_colors()->used.end(), true) > 1;
+            m_preset_interactor.initialize_config_container_with_default(
+                *config_container, many_colors ? std::string("Prusa CORE One INDX") : std::string{}
+            );
+        }
+
+        // Colors of a file written by another application become the colors of the extruders.
+        FileLoadingLogic::apply_imported_colors(
+            added_project,
+            *added_project.config_containers().front()
+        );
+
+        // Print settings of a file written by another application: written over the
+        // selected print preset, so they show up as modified and can be reverted.
+        if (!added_project.imported_print_settings().empty()) {
+            const auto print_report = Slic3r::Biz::Format::ForeignPrint::apply(
+                *added_project.config_containers().front(),
+                added_project.imported_print_settings()
+            );
+            added_project.imported_print_settings().clear();
+            (void) print_report;
         }
 
         for (std::unique_ptr<ConfigContainer>& config_container : added_project.config_containers())
@@ -1148,18 +1171,40 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
         l->on_file_load_started();
     });
 
+    // A single OBJ with several colors opened in an empty project with a single extruder starts a new
+    // project on the printer with the most tool slots, like a 3MF written by another application.
+    if (paths.size() == 1 && selected_project_is_empty()) {
+        const auto& empty_project = m_workbench.project(selected_project_id());
+        const Domain::BedRef empty_bed = scene_interactor().bed_selection().last_selected_bed();
+        const Domain::ConfigContainer* empty_cc = empty_project.find_config_container(empty_bed.config_container_id);
+        const bool single_extruder = empty_cc == nullptr || empty_cc->selected_preset().hw_config.material_slot_count() <= 1;
+        if (single_extruder) {
+            if (std::optional<Domain::ImportedColors> colors = FileLoadingLogic::peek_obj_colors(paths.front())) {
+                const SelectionId previous_project_id = m_selection.project_id;
+                Project colored_project;
+                colored_project.imported_colors() = std::move(colors);
+                if (this->do_load_project(std::move(colored_project), {}).has_value())
+                    this->remove_project(previous_project_id);
+            }
+        }
+    }
+
     const auto& proj            = m_workbench.project(selected_project_id());
     Domain::BedRef selected_bed = scene_interactor().bed_selection().last_selected_bed();
     const Domain::ConfigContainer* cc =
         proj.find_config_container(selected_bed.config_container_id);
     const Domain::BedInstance& inst = cc->find_bed_instance(selected_bed.instance_id);
     int slot_count             = cc->selected_preset().hw_config.material_slot_count();
+    std::vector<std::string> extruder_colors;
+    if (const Domain::ConfigItem* item = cc->project_settings().items.find("extruder_colour"))
+        extruder_colors = item->get<std::vector<std::string>>();
     const FileLoadingLogic::ImportToSceneResult import_result = FileLoadingLogic::import_files_and_add_to_scene(
         paths,
         slot_count,
         scene_interactor(),
         cc->bed().center() + Biz::Algorithms::Point::to_2d(inst.transformation.get_offset()),
-        m_dialog_provider
+        m_dialog_provider,
+        extruder_colors
     );
 
     if (import_result.instances.empty()) {

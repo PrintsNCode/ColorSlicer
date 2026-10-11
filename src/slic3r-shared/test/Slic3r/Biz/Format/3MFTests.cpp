@@ -1,4 +1,5 @@
 #include "Slic3r/Biz/Algorithms/TriangleSelector.hpp"
+#include "Slic3r/Biz/FileLoadingLogic.hpp"
 #include "Slic3r/Biz/Format/3mf.hpp"
 #include "Slic3r/Biz/Slicing/TestUtils.hpp"
 #include "Slic3r/Domain/Model.hpp"
@@ -227,4 +228,131 @@ TEST_CASE("3MF dual-write: version-2 MM segmentation is not dual-written for the
     // A 2.x reader only ever sees MM painting via the inline attribute, so when it's skipped
     // (version 2 data can't be dual-written) the legacy importer must find no MM painting at all.
     CHECK(legacy_model.objects[0]->volumes.front()->mm_segmentation_facets.empty());
+}
+
+
+namespace {
+
+using Slic3r::Biz::Format::ColorImport::Rgba;
+
+int volume_extruder(const ModelVolume& volume)
+{
+    const std::optional<Domain::ConfigItem> extruder = volume.volume_settings.overrides.get("extruder");
+    return extruder.has_value() ? extruder->get<int>() : 0;
+}
+
+bool is_painted_with(const ModelVolume& volume, const size_t state)
+{
+    const std::vector<bool>& used = volume.mm_segmentation_facets.get_data().used_states;
+    return state < used.size() && used[state];
+}
+
+} // namespace
+
+TEST_CASE("3MF of other applications - basematerials become extruders and painting", "[3mf][colors]")
+{
+    // 10 mm cube, object color red (8 triangles), top and bottom (4 triangles) blue.
+    const Loaded3MF loaded = load_3mf(test_3mf_path("color_basematerials.3mf"));
+    REQUIRE(loaded.model.objects.size() == 1);
+    const ModelVolume& volume = *loaded.model.objects[0]->volumes.front();
+
+    // Colors in the order the file uses them: the first triangles are blue.
+    REQUIRE(loaded.file_colors.size() == 2);
+    CHECK(loaded.file_colors[0] == Rgba{0, 0, 255, 255});
+    CHECK(loaded.file_colors[1] == Rgba{255, 0, 0, 255});
+    CHECK(loaded.file_colors_used == std::vector<bool>{true, true});
+
+    // The most used color (red) is the color of the volume, the other triangles are painted.
+    CHECK(volume_extruder(volume) == 2);
+    CHECK(is_painted_with(volume, 1));
+    CHECK_FALSE(is_painted_with(volume, 2));
+    for (int triangle = 0; triangle < 12; ++triangle)
+        CHECK(volume.mm_segmentation_facets.get_triangle_as_string(triangle).empty() == (triangle >= 4));
+}
+
+TEST_CASE("3MF of other applications - colorgroup of the materials extension", "[3mf][colors]")
+{
+    const Loaded3MF loaded = load_3mf(test_3mf_path("color_colorgroup.3mf"));
+    REQUIRE(loaded.model.objects.size() == 1);
+    const ModelVolume& volume = *loaded.model.objects[0]->volumes.front();
+
+    REQUIRE(loaded.file_colors.size() == 2);
+    CHECK(loaded.file_colors[0] == Rgba{255, 255, 0, 255}); // yellow, used by the first triangles
+    CHECK(loaded.file_colors[1] == Rgba{0, 255, 0, 255});   // green, 8 triangles
+    CHECK(volume_extruder(volume) == 2);
+    CHECK(is_painted_with(volume, 1));
+}
+
+TEST_CASE("3MF of other applications - one material per object", "[3mf][colors]")
+{
+    const Loaded3MF loaded = load_3mf(test_3mf_path("color_parts.3mf"));
+    REQUIRE(loaded.model.objects.size() == 3);
+    REQUIRE(loaded.file_colors.size() == 3);
+    CHECK(loaded.file_colors[0] == Rgba{255, 128, 0, 255});
+    CHECK(loaded.file_colors[1] == Rgba{16, 16, 16, 255});
+    CHECK(loaded.file_colors[2] == Rgba{255, 255, 255, 255});
+
+    for (int i = 0; i < 3; ++i) {
+        const ModelVolume& volume = *loaded.model.objects[size_t(i)]->volumes.front();
+        CHECK(volume_extruder(volume) == i + 1);
+        CHECK_FALSE(volume.is_mm_painted()); // a single color needs no painting
+    }
+}
+
+TEST_CASE("3MF of BambuStudio / OrcaSlicer - filaments, paint_color and object extruder", "[3mf][colors]")
+{
+    const Loaded3MF loaded = load_3mf(test_3mf_path("color_bambu.3mf"));
+    REQUIRE(loaded.model.objects.size() == 1);
+    const ModelVolume& volume = *loaded.model.objects[0]->volumes.front();
+
+    // Palette is the filament list of the file.
+    REQUIRE(loaded.file_colors.size() == 4);
+    CHECK(loaded.file_colors[0] == Rgba{255, 0, 0, 255});
+    CHECK(loaded.file_colors[3] == Rgba{255, 255, 0, 255});
+    CHECK(loaded.file_colors_used == std::vector<bool>{true, true, true, true});
+
+    // Object extruder 4 is the extruder of the volume, the first 6 triangles are painted 1, 1, 2, 2, 3, 3.
+    CHECK(volume_extruder(volume) == 4);
+    CHECK(is_painted_with(volume, 1));
+    CHECK(is_painted_with(volume, 2));
+    CHECK(is_painted_with(volume, 3));
+    for (int triangle = 0; triangle < 12; ++triangle)
+        CHECK(volume.mm_segmentation_facets.get_triangle_as_string(triangle).empty() == (triangle >= 6));
+}
+
+TEST_CASE("remap_model_extruders applies the mapping to extruders and painting at once", "[3mf][colors]")
+{
+    Loaded3MF loaded = load_3mf(test_3mf_path("color_basematerials.3mf"));
+    REQUIRE(loaded.model.objects.size() == 1);
+    const ModelVolume& volume = *loaded.model.objects[0]->volumes.front();
+    REQUIRE(volume_extruder(volume) == 2);
+
+    // Swap the two extruders: the mapping has to be applied simultaneously.
+    FileLoadingLogic::remap_model_extruders(loaded.model, {2, 1});
+    CHECK(volume_extruder(volume) == 1);
+    CHECK(is_painted_with(volume, 2));
+    CHECK_FALSE(is_painted_with(volume, 1));
+
+    // Both colors to extruder 3.
+    FileLoadingLogic::remap_model_extruders(loaded.model, {3, 3});
+    CHECK(volume_extruder(volume) == 3);
+    CHECK(is_painted_with(volume, 3));
+    CHECK_FALSE(is_painted_with(volume, 2));
+}
+
+TEST_CASE("map_colors_to_extruders picks the nearest extruder color", "[3mf][colors]")
+{
+    const std::vector<Rgba> file{{250, 0, 0, 255}, {0, 0, 250, 255}, {250, 250, 0, 255}};
+
+    // extruder 2 has no color and must never be chosen
+    const std::vector<unsigned> mapping =
+        FileLoadingLogic::map_colors_to_extruders(file, {"#0000FF", "", "#FF0000"}, 3);
+    CHECK(mapping == std::vector<unsigned>{3, 1, 3});
+
+    // extruders past the slot count are ignored
+    CHECK(FileLoadingLogic::map_colors_to_extruders(file, {"#0000FF", "#FF0000", "#FFFF00"}, 2)
+          == std::vector<unsigned>{2, 1, 2});
+
+    // no usable target color: keep order, clamp to the number of slots
+    CHECK(FileLoadingLogic::map_colors_to_extruders(file, {}, 2) == std::vector<unsigned>{1, 2, 2});
 }

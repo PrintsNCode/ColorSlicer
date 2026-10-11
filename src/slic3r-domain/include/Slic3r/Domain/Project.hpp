@@ -1,5 +1,6 @@
 #pragma once
 
+#include <utility>
 #include "Slic3r/Domain/ProjectMetadata.hpp"
 #include "Slic3r/Domain/ElementRef.hpp"
 #include "Slic3r/Domain/Forward.hpp"
@@ -8,12 +9,27 @@
 #include "Slic3r/Domain/FindById.hpp"
 #include "Slic3r/Domain/ProjectDirectoryStorage.hpp"
 
+#include <optional>
+#include <string>
+#include <vector>
+
 namespace Slic3r::Domain {
 class Model;
 class ModelInstance;
 class ModelVolume;
 class ModelObject;
 enum class ModelVolumeType : int;
+
+/**
+ * Colors found in a file written by another application (BambuStudio, OrcaSlicer, Blender...).
+ * Color i is the state i + 1 of painting and the extruder i + 1 of volumes in the loaded model.
+ * They wait until the project knows its printer: only then they can be mapped to real extruders.
+ */
+struct ImportedColors
+{
+    std::vector<std::string> hex_colors; ///< "#RRGGBB"
+    std::vector<bool> used;              ///< Same size, whether the model uses the color
+};
 
 /**
  * All data that can be loaded/saved into .3mf file.
@@ -168,6 +184,21 @@ public:
         return m_directory_storage;
     }
 
+    /**
+     * Transient, set while loading a file of another application and consumed by whoever sets
+     * the project up. Not saved to the file.
+     */
+    std::optional<ImportedColors>& imported_colors()
+    {
+        return m_imported_colors;
+    }
+
+    /** Print settings of a foreign file, consumed by the importer. Not saved. */
+    std::vector<std::pair<std::string, std::string>>& imported_print_settings()
+    {
+        return m_imported_print_settings;
+    }
+
 private:
     ProjectMetadata m_metadata;
     std::string m_file_name; ///< Used when saving project, can be changed
@@ -178,6 +209,8 @@ private:
     std::unique_ptr<Domain::Model> m_model;
     ModelInstanceList m_unplaced_model_instances;
     ProjectDirectoryStorage m_directory_storage;
+    std::optional<ImportedColors> m_imported_colors;
+    std::vector<std::pair<std::string, std::string>> m_imported_print_settings;
 };
 
 } // namespace Slic3r::Domain

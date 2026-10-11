@@ -63,7 +63,8 @@ struct CT_Base {
     std::string name;
 
     // Specifies the sRGB color for rendering the material
-    ST_ColorValue display_color;
+    // NOTE: Opaque black when the file does not specify any (alpha is opaque by default)
+    ST_ColorValue display_color{0, 0, 0, 255};
 
     AnyAttributes any_attr;
 };
@@ -71,9 +72,17 @@ using CT_Bases = std::vector<CT_Base>;
 
 using ST_ResourceID = size_t;
 using ST_ResourceIndex = size_t;
+
+/// <summary>
+/// Group of properties (materials or colors) addressed by <triangle> and <object>
+/// through pid (the id of the group) and p1/pindex (zero-based index into the group).
+/// It is filled from both
+///   <basematerials><base displaycolor=.../></basematerials> (3MF core specification) and
+///   <m:colorgroup><m:color color=.../></m:colorgroup> (3MF materials extension).
+/// </summary>
 struct CT_BaseMaterial{
     // Resource IDs MUST be unique among all materials groups
-    ST_ResourceID id;
+    ST_ResourceID id = 0;
     AnyAttributes any_attr;
     // The order of these elements forms an implicit 0 - based index 
     // that is referenced by other elements such as the <object>
@@ -163,6 +172,19 @@ struct CT_MirrorMesh {
 };
 
 /// <summary>
+/// Property references of one <triangle>: group (pid) and indices into the group (p1, p2, p3).
+/// A triangle without properties keeps the defaults. In that case the property of the object applies.
+/// </summary>
+struct CT_TriangleProps {
+    // Id of the property group. Valid resource ids start from 1, so 0 means "not specified".
+    ST_ResourceID pid = 0;
+    // Zero-based index into the group, negative means "not specified".
+    int p1 = -1;
+    int p2 = -1;
+    int p3 = -1;
+};
+
+/// <summary>
 /// Possible keep big data. So it doesn't mimic 1:1 to 3MF specification.
 /// It use Prusa indexed triangle set as data type for keep vertices and indices
 /// A mesh is therefore a continuous surface without holes, gaps, open edges,
@@ -173,14 +195,26 @@ struct CT_Mesh {
     AnyAttributes any_attr;
 
     /// <summary>
-    /// CT_Vertices as its.vertices 
+    /// CT_Vertices as its.vertices
     ///   .. ignore CT_Vertices anyAttribute
     ///   .. ignore CT_Vertex anyAttribute
     /// CT_Triangles as its.indices
     ///   .. ignore CT_Triangles anyAttribute
-    ///   .. ignore CT_Triangle p1, p2, p3, pid and anyAttribute
+    ///   .. ignore CT_Triangle anyAttribute
+    /// Triangle properties (pid, p1, p2, p3) are stored in triangle_props.
     /// </summary>
     indexed_triangle_set its;
+
+    // Property references (pid, p1, p2, p3) of the triangles.
+    // May be shorter than its.indices (or empty when no triangle has any property):
+    // triangles past the end have no properties.
+    std::vector<CT_TriangleProps> triangle_props;
+
+    // Value of the "paint_color" attribute of the triangles written by BambuStudio and OrcaSlicer.
+    // It is the serialized painting state of the triangle (see FacetsAnnotation::set_triangle_from_string).
+    // May be shorter than its.indices (or empty when no triangle is painted):
+    // triangles past the end are not painted.
+    std::vector<std::string> paint_colors;
     // its MUST have: Manifold Edges, Consistent Triangle Orientation, Outward-facing normals
     // NOTE: Positive fill rule
     // NOTE: Non-degeneracy - All triangles SHOULD have a non-zero area
@@ -267,11 +301,12 @@ struct CT_Object {
     // Reference to the property group element with the
     // matching id attribute value(e.g.<basematerials>).
     // It is REQUIRED if pindex is specified.
-    ST_ResourceID pid;
+    // NOTE: Valid resource ids start from 1, so 0 means "not specified".
+    ST_ResourceID pid = 0;
 
-    // References a zero-based index into the properties group 
+    // References a zero-based index into the properties group
     // specified by pid. This property is used to build the object.
-    ST_ResourceID pindex;
+    ST_ResourceID pindex = 0;
 
     // [Production extension]
     // A globally unique identifier for each <object> in the 3MF package 
@@ -411,6 +446,12 @@ struct Model{
     /// When empty, ns is not defined.
     /// </summary>
     std::string mirror_ns;
+
+    /// <summary>
+    /// Materials extension namespace prefix (described as "m")
+    /// When empty, ns is not defined.
+    /// </summary>
+    std::string material_ns;
 
     /// <summary>
     /// Any future attributes of not supported yet

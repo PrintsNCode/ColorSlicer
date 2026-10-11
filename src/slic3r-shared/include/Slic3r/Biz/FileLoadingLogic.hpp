@@ -3,7 +3,9 @@
 #include "Slic3r/Domain/ElementRef.hpp"
 #include "Slic3r/Domain/Project.hpp"
 #include "Slic3r/Domain/Model.hpp"
+#include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
 
+#include <optional>
 #include <string>
 #include <vector>
 #include <boost/filesystem/path.hpp>
@@ -18,6 +20,10 @@ namespace Scene { class SceneInteractor; }
 namespace Slic3r::Domain::Preset {
 struct Bundle;
 } // namespace Slic3r::Domain::Preset
+
+namespace Slic3r::Domain {
+class ConfigContainer;
+} // namespace Slic3r::Domain
 
 namespace Slic3r::Biz::FileLoadingLogic {
 
@@ -46,14 +52,51 @@ struct ImportToSceneResult {
 /**
  * Load meshes (e.g., STL, OBJ) and complex models (e.g., 3MF) from multiple source files
  * and insert them into the scene graph.
+ *
+ * @param extruder_colors "#RRGGBB" colors of the extruders of the project the files are added to.
+ * Colors of a 3MF written by another application are mapped to the nearest of them.
  */
 ImportToSceneResult import_files_and_add_to_scene(
     const std::vector<boost::filesystem::path>& input_file_paths,
     int tool_count,
     Scene::SceneInteractor& scene_interactor,
     const Domain::Vec2d& bed_center,
-    IMessageDialogProvider* dialog_provider
+    IMessageDialogProvider* dialog_provider,
+    const std::vector<std::string>& extruder_colors = {}
 );
+
+/**
+ * Colors of an OBJ file (vertex colors or materials of its .mtl) when it has more than one.
+ * nullopt for every other file and for OBJ files without colors.
+ */
+std::optional<Domain::ImportedColors> peek_obj_colors(const boost::filesystem::path& file_path);
+
+/**
+ * Replaces the extruder / painting state s of every volume of the model with extruder_of_state[s - 1].
+ * States past the end of extruder_of_state are left alone. All changes happen at once,
+ * so the mapping may swap extruders.
+ */
+void remap_model_extruders(Domain::Model& model, const std::vector<unsigned>& extruder_of_state);
+
+/**
+ * Maps colors of a file onto the extruders of an existing project: every color goes to the extruder
+ * (1-based) with the nearest color. Extruders without a color are never chosen.
+ * Without any usable target color the colors keep their order and are clamped to slot_count.
+ *
+ * @param target_hex_colors extruder_colour of the project, item i is the extruder i + 1.
+ */
+std::vector<unsigned> map_colors_to_extruders(
+    const std::vector<Format::ColorImport::Rgba>& file_colors,
+    const std::vector<std::string>& target_hex_colors,
+    std::size_t slot_count
+);
+
+/**
+ * Consumes Project::imported_colors(): the colors of the file become the colors of the first
+ * extruders of the config container and the model is remapped to use them.
+ * Meant to run once the project has its printer, before the colors are loaded to the UI.
+ */
+void apply_imported_colors(Domain::Project& project, Domain::ConfigContainer& config_container);
 
 /**
  * Load meshes from multiple source files and add them into selected object

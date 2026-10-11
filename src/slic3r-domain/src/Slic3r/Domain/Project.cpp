@@ -11,7 +11,9 @@ Project::Project(const Project& project) :
     m_metadata(project.metadata()),
     m_file_name(project.file_name()),
     m_loaded_file_path(project.loaded_file_path()),
-    m_directory_storage(project.m_directory_storage)
+    m_directory_storage(project.m_directory_storage),
+    m_imported_colors(project.m_imported_colors)
+    , m_imported_print_settings(project.m_imported_print_settings)
 {
     // Preserve IDs
     m_model.reset(Model::new_copy(project.model()));

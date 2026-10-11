@@ -80,6 +80,9 @@ struct ObjData {
 
 	// x, y, z, w
 	std::vector<float>				coordinates;
+	// r, g, b of every vertex of coordinates (3 floats per vertex), -1 when the vertex has no color.
+	// Not part of the binary format.
+	std::vector<float>				vertexColors;
 	// u, v, w
 	std::vector<float>				textureCoordinates;
 	// x, y, z
