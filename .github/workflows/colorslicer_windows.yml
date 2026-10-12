@@ -50,7 +50,9 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: deps/build/destdir
-          key: deps-win-x64-release-${{ hashFiles('deps/**') }}
+          # Reuse the key computed before the build: hashing deps/** again would walk
+          # deps/build (gigabytes) and time out.
+          key: ${{ steps.deps-cache.outputs.cache-primary-key }}
 
       - name: Configure ColorSlicer
         shell: cmd
