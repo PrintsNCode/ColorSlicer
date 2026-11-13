@@ -25,6 +25,7 @@ using Domain::SLAConfigLocation;
 using Domain::SLAMaterialSettings;
 using Domain::SLAPrinterSettings;
 using Domain::SLAPrintSettings;
+using Domain::SLAProjectSettings;
 using Domain::ToolPrintSettings;
 using nlohmann::ordered_json;
 using Domain::Vec2d;
@@ -280,12 +281,58 @@ load_fdm(const ordered_json& json, const Domain::Preset::HwPrinterConfig& hw_con
     ProjectSettings project_settings;
     const auto project_issues = load_box(json[project_location_name], project_settings);
 
+    // Optional. An object keyed by the layer id, see Config::to_json() for the layer format.
+    const std::string macro_overrides_location_name{
+        get_location_name(FDMConfigLocation::MacroOverrides)};
+    Domain::MacroOverridesMapFDM macro_overrides;
+    BoxIssues macro_overrides_issues;
+    if (is_object(macro_overrides_location_name, json)) {
+        for (const auto& [id, layer_json] : json[macro_overrides_location_name].items()) {
+            if (!layer_json.is_object() || !is_object("overrides", layer_json)) {
+                macro_overrides_issues[id] = {
+                    ItemParsingIssueType::InvalidFormat, "Not a macro overrides layer!"};
+                continue;
+            }
+            Domain::MacroOverridesLayerFDM layer;
+            if (const auto name{layer_json.find("name")};
+                name != layer_json.end() && name->is_string()) {
+                layer.name = name->get<std::string>();
+            }
+            if (is_object("params", layer_json)) {
+                for (const auto& [name, value_json] : layer_json["params"].items()) {
+                    if (const auto value{print_mode_param_from_json(value_json)}) {
+                        layer.params.insert_or_assign(name, *value);
+                    } else {
+                        macro_overrides_issues[id + "." + name] = {
+                            ItemParsingIssueType::InvalidFormat,
+                            "Not a labeled bool, number or string!"};
+                    }
+                }
+            }
+            BoxIssues issues{load_box(layer_json["overrides"], layer.overrides)};
+            macro_overrides_issues.merge(issues);
+            if (is_object("slot_overrides", layer_json) && !layer_json["slot_overrides"].empty()) {
+                auto slots_load_result{
+                    load_boxes<Domain::MacroSlotOverridesFDM>(layer_json["slot_overrides"])};
+                for (std::size_t slot{}; slot < slots_load_result.issues.size(); ++slot) {
+                    for (const auto& [key, issue] : slots_load_result.issues.at(slot)) {
+                        macro_overrides_issues
+                            [id + ".slot_overrides." + std::to_string(slot) + "." + key] = issue;
+                    }
+                }
+                layer.slot_overrides = std::move(slots_load_result.settings);
+            }
+            macro_overrides.insert_or_assign(id, std::move(layer));
+        }
+    }
+
     ConfigPackFDM config;
     config.printer = printer_settings;
     config.tool = tool_load_result.settings;
     config.print = print_settings;
     config.filament = filament_load_result.settings;
     config.project = project_settings;
+    config.macro_overrides = std::move(macro_overrides);
 
     IssuesPerLocation issues;
     if (!printer_issues.empty()) {
@@ -302,6 +349,9 @@ load_fdm(const ordered_json& json, const Domain::Preset::HwPrinterConfig& hw_con
     }
     if (!project_issues.empty()) {
         issues.insert({FDMConfigLocation::Project, project_issues});
+    }
+    if (!macro_overrides_issues.empty()) {
+        issues.insert({FDMConfigLocation::MacroOverrides, macro_overrides_issues});
     }
 
     return LoadResult{.config = std::move(config), .issues = std::move(issues)};
@@ -330,6 +380,17 @@ tl::expected<LoadResult, GlobalParsingIssue> load_sla(const ordered_json& json)
     SLAPrintSettings print_settings;
     const auto print_issues = load_box(json[print_location_name], print_settings);
 
+    // Optional: SLA configurations saved before the SLA project settings existed don't have them.
+    const std::string project_location_name{get_location_name(SLAConfigLocation::Project)};
+    SLAProjectSettings project_settings;
+    BoxIssues project_issues;
+    if (json.contains(project_location_name)) {
+        if (!is_object(project_location_name, json)) {
+            return tl::unexpected{GlobalParsingIssue::InvalidSLAProjectSettings};
+        }
+        project_issues = load_box(json[project_location_name], project_settings);
+    }
+
     IssuesPerLocation issues;
     if (!printer_issues.empty()) {
         issues.insert({SLAConfigLocation::Printer, printer_issues});
@@ -340,6 +401,9 @@ tl::expected<LoadResult, GlobalParsingIssue> load_sla(const ordered_json& json)
     if (!print_issues.empty()) {
         issues.insert({SLAConfigLocation::Print, print_issues});
     }
+    if (!project_issues.empty()) {
+        issues.insert({SLAConfigLocation::Project, project_issues});
+    }
 
     return LoadResult{
         .config =
@@ -347,6 +411,7 @@ tl::expected<LoadResult, GlobalParsingIssue> load_sla(const ordered_json& json)
                 .sla_printer_settings = printer_settings,
                 .sla_material_settings = material_settings,
                 .sla_print_settings = print_settings,
+                .sla_project_settings = project_settings,
             },
         .issues = std::move(issues)
     };

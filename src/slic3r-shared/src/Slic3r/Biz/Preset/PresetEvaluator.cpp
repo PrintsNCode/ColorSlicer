@@ -1,4 +1,7 @@
 #include "Slic3r/Biz/Preset/PresetEvaluator.hpp"
+
+#include "PresetMatchRuleFactor.hpp"
+
 #include <fmt/ranges.h>
 #include "Slic3r/Biz/Preset/PresetCollectionEvaluator.hpp"
 #include "Slic3r/Biz/Preset/ValueMapBuilder.hpp"
@@ -12,6 +15,13 @@
 namespace Slic3r::Biz::Preset {
 
 namespace {
+std::string fmt_last_location()
+{
+    auto val = ScopedSourceLocation::last_source_location();
+    return val.has_value() ? val->to_string() : "";
+}
+
+
 template <typename T, typename... Ts>
 struct AnyTypeOf
 {
@@ -125,7 +135,8 @@ struct CastingGetterVisitor
             }
         }
         SPDLOG_ERROR(
-            "Type mismatched for item {}: source type: {}  dest type: {}",
+            "[{}]: Type mismatched for item {}: source type: {}  dest type: {}",
+            fmt_last_location(),
             item.name(),
             type_name(value),
             type_name(dest)
@@ -174,7 +185,8 @@ struct ConfigValueSetterVisitor
                 return type_name(v);
             });
             SPDLOG_ERROR(
-                "Type mismatched for item {}: source type: {}  dest type: {}",
+                "[{}]: Type mismatched for item {}: source type: {}  dest type: {}",
+                fmt_last_location(),
                 item.name(),
                 type_name(v),
                 dest_type_name
@@ -198,7 +210,8 @@ struct ConfigValueSetterVisitor
                 return type_name(v);
             });
             SPDLOG_ERROR(
-                "Type mismatched for item {}: source type: {}  dest type: {}",
+                "[{}]: Type mismatched for item {}: source type: {}  dest type: {}",
+                fmt_last_location(),
                 item.name(),
                 type_name(v),
                 dest_type_name
@@ -226,7 +239,8 @@ struct ConfigValueSetterVisitor
                 return type_name(v);
             });
             SPDLOG_ERROR(
-                "Type mismatched for item {}: source type: {}  dest type: {}",
+                "[{}]: Type mismatched for item {}: source type: {}  dest type: {}",
+                fmt_last_location(),
                 item.name(),
                 type_name(v),
                 dest_type_name
@@ -284,7 +298,8 @@ struct ConfigValueSetterVisitor
             return type_name(v);
         });
         SPDLOG_ERROR(
-            "Type mismatched for item {}: source type: {}  dest type: {}",
+            "[{}]: Type mismatched for item {}: source type: {}  dest type: {}",
+            fmt_last_location(),
             item.name(),
             type_name(v),
             dest_type_name
@@ -309,7 +324,7 @@ ConfigType config_values(
     for (const auto& [k, v] : values) {
         const auto q = config.find(k);
         if (q.item == nullptr) {
-            SPDLOG_ERROR("Invalid key {} for {}", k, type_name(config));
+            SPDLOG_ERROR("[{}]: Invalid key {} for {}", fmt_last_location(), k, type_name(config));
             continue;
         }
 
@@ -400,6 +415,9 @@ Domain::Preset::EvaluatedPreset<FdmConfigType, SlaConfigType> PresetEvaluator::p
     const EvalPresetContext& context
 )
 {
+
+    ScopedPresetEvalAssertHandler assert_scope;
+    ScopedSourceLocation location_scope{context.last_node_location};
     std::vector<std::string> conditions;
     if (!context.conditions.empty() || !context.negative_conditions.empty()) {
         std::ranges::transform(context.conditions, std::back_inserter(conditions),
@@ -544,6 +562,14 @@ PresetEvaluator::EvaluatedPrinterPresets PresetEvaluator::evaluate(const HwPrint
         );
         update_printer_preset_from_hw_config(hw_config, ep.preset.config_box());
 
+        auto printer_preset_eval_values = printer_tools_values;
+        for (auto& v : printer_preset_eval_values) {
+            // propagate printer preset features
+            append_printer_preset_feature_values(v, ep.preset.features, m_vendor_info);
+        }
+        // also propagate features to printer_values (are reused for tool/material preset evals)
+        append_printer_preset_feature_values(printer_values, ep.preset.features, m_vendor_info);
+
         // 2. Print preset
         PresetKind print_kind = Domain::Preset::print_kind(hw_config.technology);
         auto prints_it        = m_presets.find(print_kind);
@@ -552,7 +578,7 @@ PresetEvaluator::EvaluatedPrinterPresets PresetEvaluator::evaluate(const HwPrint
 
         PresetCollectionEvaluator
             print_eval(prints_it->second, print_names_it->second, m_eval, {}, hw_config.name);
-        auto print_presets = print_eval.eval_preset(printer_tools_values);
+        auto print_presets = print_eval.eval_preset(printer_preset_eval_values);
 
         // 3. Tool print presets
         // for each tool
@@ -570,9 +596,21 @@ PresetEvaluator::EvaluatedPrinterPresets PresetEvaluator::evaluate(const HwPrint
             Domain::Preset::AllToolsEvaluatedToolPrintPresets tools;
 
             Expr::ValueMap print_values = printer_values;
-            std::visit([&print_values](const auto& v) {
-                append_print_values(print_values, v);
-            }, evaluated_print_preset.values);
+            append_print_preset_feature_values(
+                print_values,
+                evaluated_print_preset.features,
+                m_vendor_info
+            );
+            std::visit(
+                [&print_values](const auto& v)
+                {
+                    append_print_values(
+                        print_values,
+                        v
+                    );
+                },
+                evaluated_print_preset.values
+            );
 
             if (hw_config.technology == Domain::PrinterTechnology::FFF) {
                 PresetCollectionEvaluator
@@ -655,7 +693,8 @@ PresetEvaluator::EvaluatedPrinterPresets PresetEvaluator::evaluate(const HwPrint
                             hw_config,
                             mat_kind,
                             mat
-                        )
+                        ),
+                        make_match_rule(mat.features)
                     );
                 }
                 if (use_material_cache) {

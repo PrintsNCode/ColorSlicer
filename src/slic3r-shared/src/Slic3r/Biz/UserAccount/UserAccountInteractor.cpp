@@ -5,6 +5,8 @@
 
 #include <nlohmann/json.hpp>
 
+#include <utility>
+
 namespace Slic3r::Biz::UserAccount {
 UserAccountInteractor::UserAccountInteractor(Platform::IMainThreadDispatcher& dispatcher) :
     m_dispatcher{dispatcher},
@@ -18,7 +20,7 @@ void UserAccountInteractor::init(bool app_config_enabled)
     bool was_enabled = is_enabled();
     if (app_config_enabled) {
         if (!is_enabled()) {
-            m_communication = std::make_unique<UserAccountCommunication>(m_dispatcher);
+            replace_communication(std::make_unique<UserAccountCommunication>(m_dispatcher));
             m_communication->add_session_listener(this);
             m_communication->init();
         }
@@ -26,7 +28,7 @@ void UserAccountInteractor::init(bool app_config_enabled)
         if (is_enabled()) {
             bool was_logged = is_logged_in();
             do_log_out();
-            m_communication = std::make_unique<UserAccountCommunicationDummy>();
+            replace_communication(std::make_unique<UserAccountCommunicationDummy>());
             m_communication->add_session_listener(this);
 
             // This switch ends dispatching from UserAccountSessionDispatchBase before it can asynchrtonously dispatch loggout.
@@ -37,7 +39,6 @@ void UserAccountInteractor::init(bool app_config_enabled)
                     [](auto* listener) { listener->on_user_account_logged_out(); }
                 );
             }
-            
         }
     }
     
@@ -46,6 +47,16 @@ void UserAccountInteractor::init(bool app_config_enabled)
             [enabled](auto* listener) { listener->on_user_account_enabled_state_changed(enabled); }
         );
     }
+}
+
+void UserAccountInteractor::replace_communication(
+    std::unique_ptr<IUserAccountCommunication> communication
+)
+{
+    std::lock_guard<std::mutex> lock(m_communication_mutex);
+    m_retired_communications.emplace_back(
+        std::exchange(m_communication, std::move(communication))
+    );
 }
 
 bool UserAccountInteractor::is_enabled() const
@@ -115,7 +126,27 @@ bool UserAccountInteractor::validate_and_refresh()
 
 std::string UserAccountInteractor::access_token() const
 {
+    std::lock_guard<std::mutex> lock(m_communication_mutex);
     return m_communication->access_token();
+}
+
+std::string UserAccountInteractor::wait_for_access_token(
+    std::chrono::milliseconds timeout,
+    JThread::StopToken stop_token
+)
+{
+    IUserAccountCommunication* communication = nullptr;
+    {
+        std::lock_guard<std::mutex> lock(m_communication_mutex);
+        communication = m_communication.get();
+    }
+    return communication->wait_for_access_token(timeout, stop_token);
+}
+
+std::string UserAccountInteractor::user_id() const
+{
+    std::lock_guard<std::mutex> lock(m_communication_mutex);
+    return m_communication->user_id();
 }
 
 void UserAccountInteractor::request_printables_secret_token()
@@ -153,8 +184,6 @@ void UserAccountInteractor::on_action_success(ActionSuccessType success_type, st
         if (update_menu_callback) {
             update_menu_callback(false);
         }
-        break;
-    case Slic3r::Biz::UserAccount::ActionSuccessType::ConnectStatus:
         break;
     case Slic3r::Biz::UserAccount::ActionSuccessType::ConnectPrinterModels:
         break;
@@ -262,6 +291,8 @@ void UserAccountInteractor::on_user_id(const std::string& body)
             received_keys += key;
             if (value.is_string()) {
                 m_account_user_data[key] = value.get<std::string>();
+            } else if (value.is_number_integer()) {
+                m_account_user_data[key] = std::to_string(value.get<int>());
             }
         }
     } catch (const nlohmann::json::exception&) {
@@ -274,7 +305,8 @@ void UserAccountInteractor::on_user_id(const std::string& body)
         return;
     }
     std::string public_username = m_account_user_data["public_username"];
-    m_communication->on_username_changed(public_username, true);
+    const std::string id = m_account_user_data["id"];
+    m_communication->on_username_changed(public_username, id, true);
 
     if (m_account_user_data.find("email") != m_account_user_data.end()) {
         m_communication->on_email(m_account_user_data["email"]);
@@ -289,8 +321,6 @@ void UserAccountInteractor::on_user_id(const std::string& body)
     } else {
         SPDLOG_ERROR("User ID message from PrusaAuth did not contain avatar info.");
     }
-    // update printers list
-    // enqueue_connect_printer_models_action();
 
     invoke_listeners<IUserAccountListener>(
         [was_logged, public_username](auto* listener)

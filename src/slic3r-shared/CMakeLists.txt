@@ -70,6 +70,16 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Plater/PaintOnSupportsGizmo.cpp
         include/Slic3r/App/Plater/PaintOnSupportsDialog.hpp
         src/Slic3r/App/Plater/PaintOnSupportsDialog.cpp
+        include/Slic3r/App/Plater/SlaGizmoBase.hpp
+        src/Slic3r/App/Plater/SlaGizmoBase.cpp
+        include/Slic3r/App/Plater/SlaSupportPointsGizmo.hpp
+        src/Slic3r/App/Plater/SlaSupportPointsGizmo.cpp
+        include/Slic3r/App/Plater/SlaSupportPointsDialog.hpp
+        src/Slic3r/App/Plater/SlaSupportPointsDialog.cpp
+        include/Slic3r/App/Plater/SlaHollowGizmo.hpp
+        src/Slic3r/App/Plater/SlaHollowGizmo.cpp
+        include/Slic3r/App/Plater/SlaHollowDialog.hpp
+        src/Slic3r/App/Plater/SlaHollowDialog.cpp
         include/Slic3r/App/Plater/PaintOnSeamsGizmo.hpp
         src/Slic3r/App/Plater/PaintOnSeamsGizmo.cpp
         include/Slic3r/App/Plater/PaintOnSeamsDialog.hpp
@@ -194,8 +204,6 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/MultiSelections.cpp
         include/Slic3r/App/ObjectListWindow.hpp
         src/Slic3r/App/ObjectListWindow.cpp
-        include/Slic3r/App/ObjectList.hpp
-        src/Slic3r/App/ObjectList.cpp
         include/Slic3r/App/CubeView.hpp
         src/Slic3r/App/CubeView.cpp
         include/Slic3r/App/SidebarBed.hpp
@@ -212,18 +220,18 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/App/DirtyCategoryList.hpp
         include/Slic3r/App/PrintSettingsDialog.hpp
         src/Slic3r/App/PrintSettingsDialog.cpp
-        include/Slic3r/App/MaterialSettingsDialog.hpp
-        src/Slic3r/App/MaterialSettingsDialog.cpp
-        include/Slic3r/App/LogicalPrinterSettingsDialog.hpp
-        src/Slic3r/App/LogicalPrinterSettingsDialog.cpp
+        include/Slic3r/App/PrintModeDialog.hpp
+        src/Slic3r/App/PrintModeDialog.cpp
+        include/Slic3r/App/PrinterSettingsDialog.hpp
+        src/Slic3r/App/PrinterSettingsDialog.cpp
         include/Slic3r/App/PrinterAdvancedSettingsDialog.hpp
         src/Slic3r/App/PrinterAdvancedSettingsDialog.cpp
-        include/Slic3r/App/PhysicalPrinterSettingsDialog.hpp
-        src/Slic3r/App/PhysicalPrinterSettingsDialog.cpp
         include/Slic3r/App/PhysicalPrinterSettingsButton.hpp
         src/Slic3r/App/PhysicalPrinterSettingsButton.cpp
         include/Slic3r/App/LogicalPrinterSettingsButton.hpp
         src/Slic3r/App/LogicalPrinterSettingsButton.cpp
+        include/Slic3r/App/PrinterSettingsButton.hpp
+        src/Slic3r/App/PrinterSettingsButton.cpp
         include/Slic3r/App/PrinterAddDialog.hpp
         src/Slic3r/App/PrinterAddDialog.cpp
         include/Slic3r/App/PresetUpdater/PresetUpdaterActivityReporter.hpp
@@ -256,16 +264,14 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/ColorMix/ExtruderFilterButton.cpp
         include/Slic3r/App/ColorMix/BlendRecipeTile.hpp
         src/Slic3r/App/ColorMix/BlendRecipeTile.cpp
+        include/Slic3r/App/ColorMix/BlendPresetSortFilter.hpp
+        src/Slic3r/App/ColorMix/BlendPresetSortFilter.cpp
         include/Slic3r/App/ColorMix/ColorMixDialog.hpp
         src/Slic3r/App/ColorMix/ColorMixDialog.cpp
         include/Slic3r/App/SidebarToolHeadRow.hpp
         src/Slic3r/App/SidebarToolHeadRow.cpp
         include/Slic3r/App/PrinterNozzleRow.hpp
         src/Slic3r/App/PrinterNozzleRow.cpp
-        src/Slic3r/App/MaterialSelectionDialog.cpp
-        include/Slic3r/App/MaterialSelectionDialog.hpp
-        include/Slic3r/App/MaterialSelectionRow.hpp
-        src/Slic3r/App/MaterialSelectionRow.cpp
         include/Slic3r/App/Search.hpp
         src/Slic3r/App/Search.cpp
         include/Slic3r/App/OverrideItemRow.hpp
@@ -305,8 +311,12 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/PreferencesDialog.cpp
         include/Slic3r/App/NumberEntryDialog.hpp
         src/Slic3r/App/NumberEntryDialog.cpp
+        include/Slic3r/App/Mouse3D/Mouse3DController.hpp
+        src/Slic3r/App/Mouse3D/Mouse3DController.cpp
         include/Slic3r/App/InvalidDataDialog.hpp
         src/Slic3r/App/InvalidDataDialog.cpp
+        include/Slic3r/App/EffectiveValuesDialog.hpp
+        src/Slic3r/App/EffectiveValuesDialog.cpp
         include/Slic3r/App/SidebarStackLayout.hpp
         src/Slic3r/App/SidebarStackLayout.cpp
         include/Slic3r/App/CurrentPresetLabel.hpp
@@ -319,8 +329,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Theme.cpp
         include/Slic3r/App/ExtruderIcon.hpp
         src/Slic3r/App/ExtruderIcon.cpp
-        include/Slic3r/App/PhysicalPrinterAdvancedSettingsDialog.hpp
-        src/Slic3r/App/PhysicalPrinterAdvancedSettingsDialog.cpp
+        include/Slic3r/App/PhysicalPrinterForm.hpp
+        src/Slic3r/App/PhysicalPrinterForm.cpp
         include/Slic3r/App/WelcomeDialog.hpp
         src/Slic3r/App/WelcomeDialog.cpp
         src/Slic3r/App/WarningPanel.cpp
@@ -335,6 +345,15 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/PageEntryButton.cpp
         src/Slic3r/App/ProjectButton.cpp
         include/Slic3r/App/ProjectButton.hpp
+
+        include/Slic3r/App/Material/MaterialSettingsDialog.hpp
+        src/Slic3r/App/Material/MaterialSettingsDialog.cpp
+        src/Slic3r/App/Material/MaterialSelectionDialog.cpp
+        include/Slic3r/App/Material/MaterialSelectionDialog.hpp
+        include/Slic3r/App/Material/MaterialSelectionRow.hpp
+        src/Slic3r/App/Material/MaterialSelectionRow.cpp
+        include/Slic3r/App/Material/MaterialSpoolSelectionRow.hpp
+        src/Slic3r/App/Material/MaterialSpoolSelectionRow.cpp
 
         include/Slic3r/App/Config/ConfigItemTextField.hpp
         src/Slic3r/App/Config/ConfigItemTextField.cpp
@@ -412,6 +431,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Config/ConfigSubcategoryListView.cpp
         include/Slic3r/App/Config/ConfigSubcategoryItem.hpp
         src/Slic3r/App/Config/ConfigSubcategoryItem.cpp
+        include/Slic3r/App/Config/ConfigRowItemLabel.hpp
+        src/Slic3r/App/Config/ConfigRowItemLabel.cpp
         include/Slic3r/App/Config/ConfigRowItem.hpp
         src/Slic3r/App/Config/ConfigRowItem.cpp
         include/Slic3r/App/Config/ConfigItemContextRowItem.hpp
@@ -448,7 +469,9 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Browser/BrowserLogicPrintablesToConnect.cpp
         include/Slic3r/App/Browser/BrowserLogicPhysicalPrinter.hpp
         src/Slic3r/App/Browser/BrowserLogicPhysicalPrinter.cpp
-
+        include/Slic3r/App/Browser/BrowserLogicPluginMarketplace.hpp
+        src/Slic3r/App/Browser/BrowserLogicPluginMarketplace.cpp
+        
         src/Slic3r/App/Scene/Scene.cpp
         include/Slic3r/App/Scene/Scene.hpp
         src/Slic3r/App/Scene/Node.cpp
@@ -586,6 +609,13 @@ set(SLIC3R_SHARED_FILES
 
         src/Slic3r/App/Navigator.cpp
         include/Slic3r/App/Navigator.hpp
+        include/Slic3r/App/MsgBoxHandler.hpp
+        src/Slic3r/App/MsgBoxHandler.cpp
+        include/Slic3r/App/OpenFiles/OpenFilesDialogModel.hpp
+        src/Slic3r/App/OpenFiles/OpenFilesDialogModel.cpp
+        include/Slic3r/App/OpenFiles/OpenFilesDialog.hpp
+        src/Slic3r/App/OpenFiles/OpenFilesDialog.cpp
+        include/Slic3r/App/IMsgBoxProvider.hpp
 
         include/Slic3r/App/Yoga/Namespace.hpp
         src/Slic3r/App/Yoga/Namespace.cpp
@@ -607,6 +637,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Yoga/RectangleButton.cpp
         include/Slic3r/App/Yoga/LayoutButton.hpp
         src/Slic3r/App/Yoga/LayoutButton.cpp
+        include/Slic3r/App/Yoga/CircleBorderedButton.hpp
+        src/Slic3r/App/Yoga/CircleBorderedButton.cpp
         include/Slic3r/App/Yoga/Tooltip.hpp
         src/Slic3r/App/Yoga/Tooltip.cpp
         include/Slic3r/App/Yoga/Rectangle.hpp
@@ -619,10 +651,14 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Yoga/Dialog.cpp
         src/Slic3r/App/Yoga/Separator.cpp
         include/Slic3r/App/Yoga/Separator.hpp
+        include/Slic3r/App/Yoga/StrikethroughText.hpp
+        src/Slic3r/App/Yoga/StrikethroughText.cpp
         src/Slic3r/App/Yoga/Oval.cpp
         include/Slic3r/App/Yoga/Oval.hpp
         src/Slic3r/App/Yoga/Circle.cpp
         include/Slic3r/App/Yoga/Circle.hpp
+        src/Slic3r/App/Yoga/MulticolorCircle.cpp
+        include/Slic3r/App/Yoga/MulticolorCircle.hpp
         src/Slic3r/App/Yoga/Toggler.cpp
         include/Slic3r/App/Yoga/Toggler.hpp
         src/Slic3r/App/Yoga/ToggleButton.cpp
@@ -639,8 +675,6 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/App/Yoga/MenuItem.hpp
         src/Slic3r/App/Yoga/Menu.cpp
         include/Slic3r/App/Yoga/Menu.hpp
-        src/Slic3r/App/Yoga/PrinterSettingsButton.cpp
-        include/Slic3r/App/Yoga/PrinterSettingsButton.hpp
         src/Slic3r/App/Yoga/MaterialSettingsButton.cpp
         include/Slic3r/App/Yoga/MaterialSettingsButton.hpp
         include/Slic3r/App/Yoga/ButtonGroup.hpp
@@ -751,6 +785,8 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/App/UIItemCommand.hpp
         include/Slic3r/App/MenuBuilder.hpp
         src/Slic3r/App/MenuBuilder.cpp
+        include/Slic3r/App/ContextMenu.hpp
+        src/Slic3r/App/ContextMenu.cpp
         include/Slic3r/App/IMenuUpdatedListener.hpp
         include/Slic3r/App/MenuManager.hpp
         src/Slic3r/App/MenuManager.cpp
@@ -792,6 +828,8 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/ObservableList.hpp
         include/Slic3r/Biz/IListObserver.hpp
         include/Slic3r/Biz/DataObserver.hpp
+        include/Slic3r/Biz/EffectiveValueStatus.hpp
+        src/Slic3r/Biz/EffectiveValueStatus.cpp
         include/Slic3r/Biz/ConfigBoxObservableList.hpp
         include/Slic3r/Biz/OverridableCBIObservableList.hpp
         src/Slic3r/Biz/OverridableCBIObservableList.cpp
@@ -845,6 +883,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/IConfigBoxSetter.hpp
 
         include/Slic3r/Biz/Preset/IPresetChangedListener.hpp
+        include/Slic3r/Biz/Preset/IMacroOverridesChangedListener.hpp
         include/Slic3r/Biz/Preset/IConfigInteractor.hpp
         include/Slic3r/Biz/Preset/IPresetVisualGetter.hpp
         src/Slic3r/Biz/Preset/PresetInteractor.cpp
@@ -855,6 +894,9 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Preset/PresetInteractorConfigContainerContext.cpp
         include/Slic3r/Biz/Preset/PresetSelectionCheck.hpp
         src/Slic3r/Biz/Preset/PresetSelectionCheck.cpp
+        include/Slic3r/Biz/Preset/PrinterPresetSelector.hpp
+        src/Slic3r/Biz/Preset/PrinterPresetSelector.cpp
+        include/Slic3r/Biz/Preset/IPrinterPresetSelectorListener.hpp
         include/Slic3r/Biz/Preset/PresetSelectionNames.hpp
         include/Slic3r/Biz/Preset/PresetDiffOperation.hpp
         include/Slic3r/Biz/Preset/IPresetDialogManager.hpp
@@ -881,6 +923,10 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Preset/IO/PresetMetadataLegacyLoader.cpp
         include/Slic3r/Biz/Preset/IO/BundleLoader.hpp
         src/Slic3r/Biz/Preset/IO/BundleLoader.cpp
+        include/Slic3r/Biz/Preset/IO/HwConfigConnectJson.hpp
+        src/Slic3r/Biz/Preset/IO/HwConfigConnectJson.cpp
+        include/Slic3r/Biz/Preset/HwBundleEvaluator.hpp
+        src/Slic3r/Biz/Preset/HwBundleEvaluator.cpp
         include/Slic3r/Biz/CerealUtils.hpp
         src/Slic3r/Biz/Yaml/Yaml.hpp
         src/Slic3r/Biz/Yaml/Yaml.cpp
@@ -889,6 +935,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Yaml/YamlSlic3rTypes.cpp
         src/Slic3r/Biz/Preset/IO/PresetYamlDesc.hpp
 
+        include/Slic3r/Biz/PrintModeInteractor.hpp
+        src/Slic3r/Biz/PrintModeInteractor.cpp
         include/Slic3r/Biz/Preset/PresetEvaluator.hpp
         src/Slic3r/Biz/Preset/PresetEvaluator.cpp
         src/Slic3r/Biz/Preset/PresetCollectionEvaluator.hpp
@@ -899,6 +947,19 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Preset/ValueMapBuilder.cpp
         src/Slic3r/Biz/Preset/JsonUtils.hpp
         src/Slic3r/Biz/Preset/JsonUtils.cpp
+
+        include/Slic3r/Biz/ObjectList/ConfigContainerObservableList.hpp
+        src/Slic3r/Biz/ObjectList/ConfigContainerObservableList.cpp
+        include/Slic3r/Biz/ObjectList/ConfigContainerBedObservableList.hpp
+        src/Slic3r/Biz/ObjectList/ConfigContainerBedObservableList.cpp
+        include/Slic3r/Biz/ObjectList/ObjectObservableList.hpp
+        src/Slic3r/Biz/ObjectList/ObjectObservableList.cpp
+        include/Slic3r/Biz/ObjectList/VolumeObservableList.hpp
+        src/Slic3r/Biz/ObjectList/VolumeObservableList.cpp
+        include/Slic3r/Biz/ObjectList/InstanceObservableList.hpp
+        src/Slic3r/Biz/ObjectList/InstanceObservableList.cpp
+        include/Slic3r/Biz/ObjectList/ObjectListInteractor.hpp
+        src/Slic3r/Biz/ObjectList/ObjectListInteractor.cpp
 
         include/Slic3r/Biz/Expr/Parser.hpp
         src/Slic3r/Biz/Expr/Parser.cpp
@@ -911,6 +972,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/ISelectedBedInstanceChangedListener.hpp
         include/Slic3r/Biz/ISelectedConfigContainerChangedListener.hpp
         include/Slic3r/Biz/ISelectedProjectChangedListener.hpp
+        include/Slic3r/Biz/IConfigContainerListChangedListener.hpp
         src/Slic3r/Biz/ProjectInteractor.cpp
         include/Slic3r/Biz/ProjectInteractor.hpp
         include/Slic3r/Biz/ProjectScoped.hpp
@@ -932,6 +994,8 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/IBackupStoreListener.hpp
 
         include/Slic3r/Biz/Slicing/BackgroundProcess.hpp
+        include/Slic3r/Biz/Slicing/BackgroundProcessState.hpp
+        include/Slic3r/Biz/Slicing/IBackgroundProcessStateListener.hpp
         include/Slic3r/Biz/Slicing/SlicingInteractor.hpp
         src/Slic3r/Biz/Slicing/BackgroundProcess.cpp
         src/Slic3r/Biz/Slicing/SlicingInteractor.cpp
@@ -1018,6 +1082,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/Network/TCPConsole.hpp
         include/Slic3r/Biz/Network/ServiceConfig.hpp
         include/Slic3r/Biz/Network/Jwt.hpp
+        include/Slic3r/Biz/Network/MqttSubscriber.hpp
         src/Slic3r/Biz/Network/IHttp.cpp
         src/Slic3r/Biz/Network/HttpCurl.cpp
         src/Slic3r/Biz/Network/Bonjour.cpp
@@ -1025,11 +1090,14 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Network/ServiceConfig.cpp
         src/Slic3r/Biz/Network/Jwt.cpp
         src/Slic3r/Biz/Network/HttpCurlFactory.cpp
+        src/Slic3r/Biz/Network/MqttSubscriber.cpp
 
         include/Slic3r/Biz/SLAResultCache.hpp
         src/Slic3r/Biz/SLAResultCache.cpp
         include/Slic3r/Biz/SLAObjectCache.hpp
         src/Slic3r/Biz/SLAObjectCache.cpp
+        include/Slic3r/Biz/SLAObjectRequest.hpp
+        src/Slic3r/Biz/SLAObjectRequest.cpp
 
         include/Slic3r/Biz/UserAccount/IUserAccountListener.hpp
         include/Slic3r/Biz/UserAccount/IUserAccountSessionListener.hpp
@@ -1061,6 +1129,15 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/Connect/IConnectHandlerListener.hpp
         include/Slic3r/Biz/Connect/ConnectMessageHandler.hpp
         src/Slic3r/Biz/Connect/ConnectMessageHandler.cpp
+
+        include/Slic3r/Biz/ConnectPrinter/ConnectPrinter.hpp
+        src/Slic3r/Biz/ConnectPrinter/ConnectPrinter.cpp
+        include/Slic3r/Biz/ConnectPrinter/ConnectPrinterService.hpp
+        src/Slic3r/Biz/ConnectPrinter/ConnectPrinterService.cpp
+        include/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterials.hpp
+        src/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterials.cpp
+        include/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterialService.hpp
+        src/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterialService.cpp
 
         include/Slic3r/Biz/SHA256.hpp
 
@@ -1134,6 +1211,9 @@ set(SLIC3R_SHARED_FILES
 
         include/Slic3r/Biz/FileLoadingLogic.hpp
         src/Slic3r/Biz/FileLoadingLogic.cpp
+        include/Slic3r/Biz/FileOpen/ArchiveEntry.hpp
+        include/Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp
+        src/Slic3r/Biz/FileOpen/FileOpeningInteractor.cpp
         include/Slic3r/Biz/MeshExportLogic.hpp
         src/Slic3r/Biz/MeshExportLogic.cpp
         include/Slic3r/Biz/VolumeReloadLogic.hpp
@@ -1168,9 +1248,12 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/PresetUpdater/IPresetUpdaterResultListener.hpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterInteractor.hpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterJob.hpp
+        include/Slic3r/Biz/PresetUpdater/PresetUpdaterProgress.hpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterReconfigurationList.hpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterRepositoryDescriptor.hpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterReason.hpp
+        include/Slic3r/Biz/PresetUpdater/PresetUpdaterStaging.hpp
+        src/Slic3r/Biz/PresetUpdater/PresetUpdaterStaging.cpp
         include/Slic3r/Biz/PresetUpdater/PresetUpdaterWarning.hpp
         src/Slic3r/Biz/PresetUpdater/PresetUpdaterProcessStatus.hpp
         src/Slic3r/Biz/PresetUpdater/PresetUpdaterProcessStatus.cpp
@@ -1239,6 +1322,14 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/PhysicalPrinter/PhysicalPrinterStorage.cpp
         include/Slic3r/Biz/PhysicalPrinter/IPhysicalPrinterChangedListener.hpp
 
+        include/Slic3r/Biz/ExportDestination/ExportDestination.hpp
+        src/Slic3r/Biz/ExportDestination/ExportDestination.cpp
+        include/Slic3r/Biz/ExportDestination/ExportDestinationInteractor.hpp
+        src/Slic3r/Biz/ExportDestination/ExportDestinationInteractor.cpp
+        include/Slic3r/Biz/ExportDestination/IExportDestinationChangedListener.hpp
+        include/Slic3r/App/ExportDestinationButton.hpp
+        src/Slic3r/App/ExportDestinationButton.cpp
+
         include/Slic3r/App/Undo/Store.hpp
         src/Slic3r/App/Undo/Store.cpp
         include/Slic3r/App/Undo/BedSelectionState.hpp
@@ -1266,6 +1357,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Lua/PluginRegistry.cpp
         include/Slic3r/App/Lua/PluginSystem.hpp
         src/Slic3r/App/Lua/PluginSystem.cpp
+        include/Slic3r/App/Lua/PrintModePlugins.hpp
+        src/Slic3r/App/Lua/PrintModePlugins.cpp
         include/Slic3r/App/Lua/PluginDialog.hpp
         src/Slic3r/App/Lua/PluginDialog.cpp
         include/Slic3r/App/Lua/IPluginRescanListener.hpp
@@ -1275,9 +1368,11 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Lua/PluginCliOps.cpp
         src/Slic3r/App/Lua/PluginCliOpsLicenses.hpp
         src/Slic3r/App/Lua/PluginCliOpsLicenses.cpp
-        include/Slic3r/App/Lua/AuthorRegistry.hpp
-        src/Slic3r/App/Lua/AuthorRegistry.cpp
+        include/Slic3r/App/Lua/PublicKeyRegistry.hpp
+        src/Slic3r/App/Lua/PublicKeyRegistry.cpp
         include/Slic3r/App/Lua/IPluginInstallationListener.hpp
+        include/Slic3r/App/Lua/MarketplaceClient.hpp
+        src/Slic3r/App/Lua/MarketplaceClient.cpp
     
         src/Slic3r/App/Console/ConsoleInput.hpp
         src/Slic3r/App/Console/ConsoleInput.cpp
@@ -1287,6 +1382,38 @@ set(SLIC3R_SHARED_FILES
 
         include/Slic3r/Biz/HwConfigMatchers.hpp
         src/Slic3r/Biz/HwConfigMatchers.cpp
+        include/Slic3r/App/Plater/GizmoTimeouts.hpp
+        include/Slic3r/App/ObjectListItem.hpp
+        src/Slic3r/App/ObjectListItem.cpp
+        include/Slic3r/App/ObjectList/PrinterGroupItem.hpp
+        src/Slic3r/App/ObjectList/PrinterGroupItem.cpp
+        include/Slic3r/App/ObjectList/ConfigContainerBedItem.hpp
+        src/Slic3r/App/ObjectList/ConfigContainerBedItem.cpp
+        include/Slic3r/App/ObjectList/TreeNodeButton.hpp
+        src/Slic3r/App/ObjectList/TreeNodeButton.cpp
+        include/Slic3r/App/ObjectList/ExtruderMarkerReactor.hpp
+        src/Slic3r/App/ObjectList/ExtruderMarkerReactor.cpp
+        include/Slic3r/App/ObjectList/ObjectItem.hpp
+        src/Slic3r/App/ObjectList/ObjectItem.cpp
+        include/Slic3r/App/ObjectList/VolumeItem.hpp
+        src/Slic3r/App/ObjectList/VolumeItem.cpp
+        include/Slic3r/App/ObjectList/InstanceItem.hpp
+        src/Slic3r/App/ObjectList/InstanceItem.cpp
+
+        include/Slic3r/Biz/MatDb/MatDbClient.hpp
+        src/Slic3r/Biz/MatDb/MatDbClient.cpp
+        include/Slic3r/Biz/MatDb/MatDbInteractor.hpp
+        src/Slic3r/Biz/MatDb/MatDbInteractor.cpp
+        src/Slic3r/Biz/Preset/PresetMatchRuleFactor.hpp
+        src/Slic3r/Biz/Preset/PresetMatchRuleFactor.cpp
+        include/Slic3r/App/Config/ToolToFeatureDialog.hpp
+        src/Slic3r/App/Config/ToolToFeatureDialog.cpp
+        include/Slic3r/App/Config/ToolToFeatureDialogHeader.hpp
+        src/Slic3r/App/Config/ToolToFeatureDialogHeader.cpp
+        include/Slic3r/App/Config/ToolToFeatureExtruderButton.hpp
+        src/Slic3r/App/Config/ToolToFeatureExtruderButton.cpp
+        include/Slic3r/App/Config/ExtruderIdButtonGroup.hpp
+        src/Slic3r/App/Config/ExtruderIdButtonGroup.cpp
 )
 
 if (WIN32)
@@ -1354,6 +1481,7 @@ find_package(yoga CONFIG REQUIRED)
 find_package(nlohmann_json 3.11 REQUIRED)
 find_package(EXPAT CONFIG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
+find_package(PahoMqttCpp REQUIRED)
 
 if (APPLE)
     set(USE_NATIVE_MENU_DEFINE "-DUSE_NATIVE_MENU")
@@ -1438,6 +1566,7 @@ target_link_libraries(slic3r-shared PUBLIC
         range-v3::range-v3
         libcereal
         libdeflate::libdeflate_static
+        PahoMqttCpp::paho-mqttpp3-static
 )
 target_compile_definitions(slic3r-shared PUBLIC ${SLIC3R_YAML_DEFINE} ${USE_NATIVE_MENU_DEFINE})
 if (SLIC3R_SENTRY_DSN)
@@ -1496,6 +1625,10 @@ if (SLIC3R_REPO_URL)
     target_compile_definitions(slic3r-shared PRIVATE SLIC3R_REPO_URL="${SLIC3R_REPO_URL}")
 endif()
 
+if (SLIC3R_ALLOW_LOCALHOST_SERVICES)
+    target_compile_definitions(slic3r-shared PRIVATE SLIC3R_ALLOW_LOCALHOST_SERVICES)
+endif()
+
 if (SLIC3R_ENABLE_WEBKIT)
     target_compile_definitions(slic3r-shared PRIVATE SLIC3R_HAS_WEBKIT)
 endif()
@@ -1545,10 +1678,20 @@ if(SLIC3R_BUILD_TESTS)
             test/main.cpp
 
             test/Slic3r/App/DialogNavigationTests.cpp
+            test/Slic3r/App/OpenFiles/OpenFilesDialogModelTests.cpp
+
+            test/Slic3r/App/Lua/PluginBundleTests.cpp
+            test/Slic3r/App/Lua/MarketplaceClientTests.cpp
+
+            test/Slic3r/App/Config/CategoryUtilsTests.cpp
+
+            test/Slic3r/App/Undo/ToolStateSerializeTests.cpp
 
             test/Slic3r/App/Scene/Node.cpp
             test/Slic3r/App/Scene/Ray.cpp
-        test/Slic3r/App/Scene/MouseBindingScheme.cpp
+            test/Slic3r/App/Scene/CameraTrackballControllerTests.cpp
+            test/Slic3r/App/Scene/ClipperTests.cpp
+            test/Slic3r/App/Scene/MouseBindingScheme.cpp
 
             test/Slic3r/App/Plater/SurfaceMesh.cpp
 
@@ -1581,8 +1724,10 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/ProjectInteractorTests.cpp
             test/Slic3r/Biz/ExportGcodeTests.cpp
             test/Slic3r/Biz/Scene/SceneInteractorTests.cpp
+            test/Slic3r/Biz/SlaPointsOperationsTests.cpp
             test/Slic3r/Biz/Scene/VirtualBedPreviewTests.cpp
             test/Slic3r/Biz/WeakerPointerTests.cpp
+            test/Slic3r/Biz/FileDownloader/FileDownloaderJobTests.cpp
             test/Slic3r/Biz/ObservableListSortFilterTests.cpp
             test/Slic3r/Biz/ObservableListTransformerTests.cpp
             test/Slic3r/Biz/ObservableListSearcherTests.cpp
@@ -1599,9 +1744,13 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/Preset/IO/HwConfigDefLoaderTests.cpp
             test/Slic3r/Biz/Preset/IO/PresetLoaderTests.cpp
             test/Slic3r/Biz/Preset/IO/PresetMetadataLegacyLoaderTests.cpp
+            test/Slic3r/Biz/Preset/IO/HwConfigConnectJsonTests.cpp
             test/Slic3r/Biz/Preset/PresetCollectionEvaluatorTests.cpp
             test/Slic3r/Biz/Preset/PresetEvaluatorTests.cpp
             test/Slic3r/Biz/Preset/HwConfigEvaluatorTests.cpp
+            test/Slic3r/Biz/Preset/ConnectJsonTestUtils.cpp
+            test/Slic3r/Biz/Preset/ConnectJsonTestUtils.hpp
+            test/Slic3r/Biz/Preset/HwBundleEvaluatorTests.cpp
             test/Slic3r/Biz/Preset/ProjectPresetViewTests.cpp
             test/Slic3r/Biz/Preset/PresetInteractorTests.cpp
             test/Slic3r/Biz/Preset/PresetNameValidatorTests.cpp
@@ -1611,6 +1760,7 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/Slicing/GCodeUtils.cpp
             test/Slic3r/Biz/Slicing/ActionsTests.cpp
             test/Slic3r/Biz/Slicing/ListenersTests.cpp
+            test/Slic3r/Biz/Slicing/SLAObjectRequestTests.cpp
             test/Slic3r/Biz/Slicing/ThumbnailsTests.cpp
 
             test/Slic3r/Biz/Config/ConfigLegacyTests.cpp
@@ -1622,6 +1772,7 @@ if(SLIC3R_BUILD_TESTS)
 
             test/Slic3r/Biz/ArrangeInteractorTests.cpp
             test/Slic3r/Biz/ProjectSettingsInteractorTests.cpp
+            test/Slic3r/Biz/VolumeReloadLogicTests.cpp
 
             test/Slic3r/Biz/PresetUpdater/PresetUpdaterStageTests.cpp
             test/Slic3r/Biz/PresetUpdater/PresetUpdaterActionTests.cpp
@@ -1639,9 +1790,14 @@ if(SLIC3R_BUILD_TESTS)
 
             test/Slic3r/Biz/BundleCacheTests.cpp
 
+            test/Slic3r/Biz/FileOpen/ArchiveTestUtils.hpp
+            test/Slic3r/Biz/FileOpen/ArchiveExtractionTests.cpp
+            test/Slic3r/Biz/FileOpen/FileOpeningInteractorTests.cpp
+
         test/Slic3r/Biz/UserAccount/UserAccountSessionTests.cpp
 
         test/Slic3r/App/CustomGCodeMigrationTests.cpp
+        test/Slic3r/Biz/MatDb/MatDbClientTests.cpp
     )
     target_include_directories(slic3r-shared-tests PRIVATE test src)
 

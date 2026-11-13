@@ -175,6 +175,23 @@ config_pack_diff(const Domain::ConfigPack& a, const Domain::ConfigPack& b)
                         filter_diff_keys(box_ref_a.get(), diff_keys);
                         result.insert(result.end(), diff_keys.begin(), diff_keys.end());
                     }
+                },
+                [&](const Domain::NamedBoxRefs& named_box_refs_a)
+                {
+                    ASSERT(std::holds_alternative<Domain::NamedBoxRefs>(box_or_boxes_b));
+                    const auto& named_box_refs_b{std::get<Domain::NamedBoxRefs>(box_or_boxes_b)};
+                    ASSERT(named_box_refs_a.size() == named_box_refs_b.size());
+                    for (std::size_t inner_index{}; inner_index < named_box_refs_a.size();
+                         ++inner_index) {
+                        const auto& [name_a, box_ref_a]{named_box_refs_a[inner_index]};
+                        const auto& [name_b, box_ref_b]{named_box_refs_b[inner_index]};
+                        ASSERT(name_a == name_b);
+                        std::vector<std::string> diff_keys{
+                            box_ref_a.get().diff_keys(box_ref_b.get())
+                        };
+                        filter_diff_keys(box_ref_a.get(), diff_keys);
+                        result.insert(result.end(), diff_keys.begin(), diff_keys.end());
+                    }
                 }
             },
             box_or_boxes_a
@@ -216,11 +233,11 @@ static std::vector<std::string> dirty_options_in_selected_preset(
         ignore_tool_print
             || preset_interactor.selected_printer_preset().technology()
                 == Domain::PrinterTechnology::SLA,
-        ignore_tool_material
-            || preset_interactor.selected_printer_preset().technology()
-                == Domain::PrinterTechnology::SLA,
+        ignore_tool_material,
         index
     );
+    std::visit([](auto& config_pack) { config_pack.macro_overrides = {}; }, config_initial);
+    std::visit([](auto& config_pack) { config_pack.macro_overrides = {}; }, config_selected);
     diff_keys = config_pack_diff(config_initial, config_selected);
 
     return diff_keys;
@@ -368,7 +385,7 @@ static size_t tool_count(const Domain::Preset::HwPrinterConfig& hw_printer_confi
 
 static std::string dialog_name()
 {
-    return Biz::_u8L("Switching Presets: Unsaved Changes");
+    return Biz::_u8L("Switching presets: unsaved changes");
 }
 
 bool can_select_printer_preset(

@@ -24,6 +24,7 @@ ConfigPack SelectedPreset::config() const
         config.filament.resize(materials.size());
         for (size_t i = 0, n = materials.size(); i < n; i++)
             config.filament[i] = std::get<FilamentSettings>(materials[i].values);
+        config.macro_overrides = std::get<MacroOverridesMapFDM>(macro_overrides);
         return config;
     }
     if (printer.kind == PresetKind::SlaPrinter) {
@@ -32,10 +33,33 @@ ConfigPack SelectedPreset::config() const
         config.sla_print_settings   = std::get<SLAPrintSettings>(print.values);
         ASSERT(materials.size() == 1);
         config.sla_material_settings = std::get<SLAMaterialSettings>(materials.at(0).values);
+        config.macro_overrides = std::get<MacroOverridesMapSLA>(macro_overrides);
         return config;
     }
 
     PANIC("Unsupported technology");
+}
+
+void
+SelectedPreset::set_material_matdb_uuid(size_t slot_index, std::string_view material_matdb_uuid)
+{
+    ASSERT(slot_index < materials.size());
+
+    if (material_matdb_uuids.empty()) {
+        material_matdb_uuids.resize(materials.size());
+    } else {
+        ASSERT(material_matdb_uuids.size() == materials.size());
+    }
+
+    material_matdb_uuids.at(slot_index) = material_matdb_uuid;
+}
+
+std::string_view SelectedPreset::material_matdb_uuid(size_t slot_index) const
+{
+    if (material_matdb_uuids.empty()) {
+        return {};
+    }
+    return material_matdb_uuids.at(slot_index);
 }
 
 SelectedPreset SelectedPreset::make(const SelectedPresetMetadata& metadata, const ConfigPack& config)
@@ -57,6 +81,7 @@ SelectedPreset SelectedPreset::make(const SelectedPresetMetadata& metadata, cons
                         metadata.print,
                         typed_config.print
                     ),
+                    .macro_overrides = typed_config.macro_overrides,
                 };
 
                 ASSERT(metadata.hw_config.tools.size() == metadata.tools.size());
@@ -80,6 +105,8 @@ SelectedPreset SelectedPreset::make(const SelectedPresetMetadata& metadata, cons
                     );
                 }
 
+                ret.material_matdb_uuids = metadata.material_matdb_uuids;
+
                 return ret;
             },
             [&](const ConfigPackSLA& typed_config) -> SelectedPreset {
@@ -94,14 +121,16 @@ SelectedPreset SelectedPreset::make(const SelectedPresetMetadata& metadata, cons
                     ),
                     .print = EvaluatedPrintPreset::Preset::make(
                         PresetKind::SlaPrint,
-                        metadata.printer,
+                        metadata.print,
                         typed_config.sla_print_settings
                     ),
                     .materials = {{EvaluatedMaterialPreset::Preset::make(
                         PresetKind::SlaMaterial,
                         metadata.materials.at(0),
                         typed_config.sla_material_settings
-                    )}}
+                    )}},
+                    .material_matdb_uuids = metadata.material_matdb_uuids,
+                    .macro_overrides = typed_config.macro_overrides,
                 };
             },
         },
@@ -115,6 +144,7 @@ SelectedPresetMetadata SelectedPreset::metadata() const
         .hw_config = hw_config,
         .printer = printer.metadata(),
         .print = print.metadata(),
+        .material_matdb_uuids = material_matdb_uuids
     };
 
     for (const auto& tool : tools)

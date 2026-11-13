@@ -28,6 +28,7 @@ public:
     void set_background_color(const ImColor& color, const ImColor& color_hover);
 
     const ImColor& background_color_checked() const;
+    const ImColor& background_color_checked_hover() const;
     void set_background_color_checked(Platform::Color color);
     void set_background_color_checked(const ImColor& background_color_checked);
     void set_background_color_checked(
@@ -44,6 +45,7 @@ public:
 
     float background_border_width() const;
     void set_background_border_width(float width);
+    void set_background_border_dash(float dash_length, float gap_length);
 
     const EvaluatedPaddings& content_padding();
     void set_content_padding(const Paddings& padding);
@@ -62,6 +64,9 @@ public:
 
     YGDirection content_direction() const;
     void set_content_direction(YGDirection direction);
+
+    bool content_apply_window_alpha() const;
+    void set_content_apply_window_alpha(bool apply_window_alpha);
 
     float rounding() const;
     void set_rounding(float rounding);

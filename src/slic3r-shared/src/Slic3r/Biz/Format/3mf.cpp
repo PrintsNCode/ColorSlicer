@@ -6,7 +6,7 @@
 
 #include <boost/algorithm/string/predicate.hpp> // iends_with
 #include <boost/filesystem.hpp> // storing exception
-#include "Slic3r/Biz/Algorithms/MiniZWrapper.hpp" // mini zip archivator
+#include "Slic3r/Biz/Algorithms/ZipArchive.hpp"
 #include "3mf/Relations.hpp"
 #include "3mf/Model3mf.hpp"
 // #include "3mf/BuildTicket.hpp"
@@ -41,10 +41,7 @@ using Slic3r::Domain::SquareMatrix3d;
 
 using Slic3r::Biz::_u8L;
 using Slic3r::Domain::is_approx;
-using Slic3r::Biz::Algorithms::open_zip_reader;
-using Slic3r::Biz::Algorithms::close_zip_reader;
-using Slic3r::Biz::Algorithms::open_zip_writer;
-using Slic3r::Biz::Algorithms::close_zip_writer;
+using Slic3r::Biz::Algorithms::ZipArchive;
 
 using ModelObject       = Slic3r::Domain::ModelObject;
 using ModelVolume       = Slic3r::Domain::ModelVolume;
@@ -78,7 +75,7 @@ struct ContentTypes
     bool contain_svg = false;
 };
 
-void store_content_type(mz_zip_archive& archive, const ContentTypes& ct)
+void store_content_type(ZipArchive& archive, const ContentTypes& ct)
 {
     std::stringstream stream;
     stream << "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n";
@@ -96,37 +93,8 @@ void store_content_type(mz_zip_archive& archive, const ContentTypes& ct)
     stream << "</Types>";
     std::string out = stream.str();
 
-    if (!mz_zip_writer_add_mem(
-            &archive,
-            CONTENT_TYPES_FILE,
-            (const void*) out.data(),
-            out.length(),
-            MZ_DEFAULT_COMPRESSION
-        ))
+    if (!archive.add_entry(CONTENT_TYPES_FILE, out.data(), out.length()))
         throw boost::filesystem::filesystem_error("Unable to add content types to archive.", {});
-}
-
-void store_thumbnail(mz_zip_archive& archive, const Domain::Image& thumbnail, const char* filepath)
-{
-    size_t png_size = 0;
-    void* png_data  = tdefl_write_image_to_png_file_in_memory_ex(
-        thumbnail.pixels.data(),
-        thumbnail.width(),
-        thumbnail.height(),
-        4,
-        &png_size,
-        MZ_DEFAULT_LEVEL,
-        0
-    );
-    if (png_data == nullptr)
-        throw boost::filesystem::filesystem_error(
-            "Can't create PNG data for store thumbnail to archive.",
-            {}
-        );
-    ScopeGuard sg_png_data([png_data]() { mz_free(png_data); });
-
-    if (!mz_zip_writer_add_mem(&archive, filepath, (const void*) png_data, png_size, MZ_DEFAULT_COMPRESSION))
-        throw boost::filesystem::filesystem_error("Can't add PNG data to archive.", {});
 }
 
 ///////////////////////////////////////////////
@@ -180,7 +148,21 @@ bool can_be_instance(const Transform3d& tr1, const Transform3d& tr2)
     return true;
 }
 
-ModelMap add_build_instances(Slic3r::Domain::Model& model, const CT_Items& items)
+double unit_to_conversion_factor_to_mm(ST_Unit unit)
+{
+    switch (unit) {
+        case ST_Unit::millimeter : return 1.;
+        case ST_Unit::micron :     return 0.001;
+        case ST_Unit::meter :      return 1000.;
+        case ST_Unit::inch  :      return 25.4;
+        case ST_Unit::foot :       return 304.8;
+        case ST_Unit::centimeter : return 10.;
+    }
+    UNREACHABLE();
+    return 1.;
+}
+
+ModelMap add_build_instances(Slic3r::Domain::Model& model, const CT_Items& items, ST_Unit unit)
 {
     ModelMap model_map;
     model_map.instances = InstanceMap(items.size(), {nullptr});
@@ -197,6 +179,9 @@ ModelMap add_build_instances(Slic3r::Domain::Model& model, const CT_Items& items
             // Addresing to another file!
             path_id.path = item.path; // copy
 
+        Domain::Transform3d item_trafo = item.transform;
+        item_trafo.translation() *= unit_to_conversion_factor_to_mm(unit);
+
         ModelObject* model_object = nullptr;
         auto it                   = build_map.find(path_id);
         if (it != build_map.end()) {
@@ -204,7 +189,7 @@ ModelMap add_build_instances(Slic3r::Domain::Model& model, const CT_Items& items
             // it depends on transformation matrices
             for (ModelObject* mo : it->second) {
                 const Transform3d& mi_tr = mo->instances.front()->get_matrix();
-                if (can_be_instance(mi_tr, item.transform)) {
+                if (can_be_instance(mi_tr, item_trafo)) {
                     model_object = mo;
                     break;
                 }
@@ -231,7 +216,7 @@ ModelMap add_build_instances(Slic3r::Domain::Model& model, const CT_Items& items
         }
 
         ModelInstance* instance_ptr = model_object->add_instance();
-        instance_ptr->set_transformation(Domain::Transformation(item.transform));
+        instance_ptr->set_transformation(Domain::Transformation(item_trafo));
         model_map.instances[&item - &items.front()] = instance_ptr;
     }
     return model_map;
@@ -261,6 +246,7 @@ using ObjectMap = std::unordered_map<Slic3r::PathId, ObjectCompose>;
 
 bool process_object_with_components(
     const CT_Object& object_3mf,
+    ST_Unit unit,
     ObjectMap& object_map,
     Domain::Model& temp_model,
     const std::string* filepath = nullptr // set only when it is not root model
@@ -318,7 +304,9 @@ bool process_object_with_components(
             volume_traces.push_back({path_id_c});
             if (mv->type() != ModelVolumeType::MODEL_PART)
                 mv->set_type(ModelVolumeType::MODEL_PART);
-            mv->set_transformation(component.transform);
+            Domain::Transform3d trafo = component.transform;
+            trafo.translation() *= unit_to_conversion_factor_to_mm(unit);
+            mv->set_transformation(trafo);
             continue;
         }
 
@@ -330,7 +318,9 @@ bool process_object_with_components(
             // same object can be referenced by multiple components, give this copy its own id
             mv->set_new_unique_id();
             // transform by current transformation
-            mv->set_transformation(component_volume->get_matrix() * component.transform);
+            Domain::Transform3d comp_trafo = component.transform;
+            comp_trafo.translation() *= unit_to_conversion_factor_to_mm(unit);
+            mv->set_transformation(comp_trafo * component_volume->get_matrix());
             if (!compose.object->name.empty())
                 mv->name = mv->name.empty() ? compose.object->name :
                                               (compose.object->name + " | " + mv->name);
@@ -576,6 +566,7 @@ FileColors collect_used_colors(ColorImportState& color, const Domain::Model& mod
 // Return true when processed otherwise false
 bool move_mesh(
     CT_Object& object_3mf,
+    ST_Unit unit,
     ModelObject& temp_object,
     ObjectMap& object_map,
     const CT_BaseMaterials& materials,
@@ -603,11 +594,17 @@ bool move_mesh(
             }
         }
 
+        if (unit != ST_Unit::millimeter) {
+            float mult = float(unit_to_conversion_factor_to_mm(unit));
+            for (Domain::Vec3f& pt : its.vertices)
+                pt = mult * pt;
+        }
+
         const size_t triangle_count = its.indices.size();
         Domain::TriangleMeshStats stats = Biz::Algorithms::TriangleMesh::calculate_stats(
-            object_3mf.mesh.its
+            its
         );
-        Domain::TriangleMesh tm(std::move(object_3mf.mesh.its), std::move(stats));
+        Domain::TriangleMesh tm(std::move(its), std::move(stats));
         
         ModelVolume* vol = Biz::Algorithms::ModelObject::add_volume(
             &temp_object,
@@ -635,6 +632,7 @@ bool move_mesh(
 /// NOTE: objects_3mf is not const because mesh(indexed_triangle_set) is moved into temp_model!
 /// </summary>
 /// <param name="objects_3mf">Source object</param>
+/// <param name="unit">Unit loaded from 3MF</param>
 /// <param name="materials">Material groups of the .model file the objects are from</param>
 /// <param name="color">Colors collected from the file</param>
 /// <param name="temp_model">Temporary storage for object</param>
@@ -642,6 +640,7 @@ bool move_mesh(
 /// <param name="path">For root .model it is null otherwise it contains .model path</param>
 /// <returns>Indices of not moved objects - not core 3mf</returns>
 std::vector<size_t> move_objects(/*const*/ CT_Objects& objects_3mf,
+                                 ST_Unit unit,
                                  const CT_BaseMaterials& materials,
                                  ColorImportState& color,
                                  Domain::Model& temp_model,
@@ -659,11 +658,11 @@ std::vector<size_t> move_objects(/*const*/ CT_Objects& objects_3mf,
 
     for (CT_Object& object_3mf : objects_3mf) {
         // contain Object mesh?
-        if (move_mesh(object_3mf, temp_object, object_map, materials, color, path))
+        if (move_mesh(object_3mf, unit, temp_object, object_map, materials, color, path))
             continue;
 
         // contain Object componnets?
-        if (!process_object_with_components(object_3mf, object_map, temp_model, path)) {
+        if (!process_object_with_components(object_3mf, unit, object_map, temp_model, path)) {
             // component with unknown object yet - set to process next loop
             queue_objects.push_back(&object_3mf - &objects_3mf.front());
         }
@@ -828,6 +827,7 @@ ModelMap move_model(/*const*/ LoadedModel& from,
         for (auto& [path, sub_model] : from.sub_models) {
             std::vector<size_t> not_processed_objects = move_objects(
                 sub_model.resource.objects,
+                sub_model.unit,
                 sub_model.resource.base_materials,
                 color,
                 temp_model,
@@ -842,6 +842,7 @@ ModelMap move_model(/*const*/ LoadedModel& from,
     }
     std::vector<size_t> not_processed_objects = move_objects(
         from_root.resource.objects,
+        from_root.unit,
         from_root.resource.base_materials,
         color,
         temp_model,
@@ -853,7 +854,7 @@ ModelMap move_model(/*const*/ LoadedModel& from,
         );
 
     // fill build and instances
-    ModelMap model_map = add_build_instances(to, from_root.build.items);
+    ModelMap model_map = add_build_instances(to, from_root.build.items, from_root.unit);
 
     // fill build objects by object_map from temp_model
     model_map.volumes = fill_build_objects(model_map.build, object_map);
@@ -896,17 +897,14 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
 {
     Read3mfIssues collected_issues;
 
-    mz_zip_archive archive;
-    mz_zip_zero_struct(&archive);
     std::string filepath_str{filepath_3mf};
     // TODO: change interface to acceppt string_view
-    if (!open_zip_reader(&archive, filepath_str))
+    ZipArchive archive = ZipArchive::open(filepath_str, ZipArchive::Mode::Read);
+    if (!archive.is_open())
         throw Loaded3MFException(Read3mfIssue(
             Read3mfIssueType::zip_error,
-            _u8L("Unable to open archive: ") + Biz::translate_miniz_error(archive.m_last_error)
+            _u8L("Unable to open archive: ") + Biz::translate_miniz_error(archive.last_error())
         ));
-
-    ScopeGuard sg_archive([&archive]() { close_zip_reader(&archive); });
 
     tl::expected<LoadedRelations, Read3mfIssue> relations = load_relations(
         archive,
@@ -928,12 +926,8 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
     // Colors are imported only from files of other applications. PrusaSlicer project keeps
     // its extruders and painting in its own files.
     ColorImportState color;
-    color.enabled = mz_zip_reader_locate_file(
-                        &archive,
-                        std::string{Biz::Format::ProjectFileConstants::PRUSA_PROJECT_FILEPATH}.c_str(),
-                        nullptr,
-                        0
-                    ) < 0;
+    color.enabled =
+        archive.locate_file(std::string{Biz::Format::ProjectFileConstants::PRUSA_PROJECT_FILEPATH}) < 0;
     if (color.enabled) {
         color.config = ForeignConfig::read_bambu_colors(archive);
         color.bambu  = color.config.has_model_settings || !color.config.filament_colors.empty();
@@ -967,7 +961,7 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
     PrusaFilesResult prusa_files_result = load_prusa_files(archive, model_map, collected_issues);
 
     std::vector<bool>& used_files = prusa_files_result.used_file_indices;
-    assert(used_files.size() == mz_zip_reader_get_num_files(&archive));
+    assert(used_files.size() == archive.get_num_files());
     assert(used_files.size() == loaded_model.used_files.size());
     for (size_t i = 0; i < loaded_model.used_files.size(); ++i)
         if (loaded_model.used_files[i]) {
@@ -985,7 +979,7 @@ Loaded3MF load_3mf(const std::string& filepath_3mf)
         if (used_files[i])
             continue; // already processed
 
-        if (!mz_zip_reader_file_stat(&archive, i, &stat)) {
+        if (!archive.stat_file(i, stat)) {
             collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::cant_read_file_stats, std::to_string(i)));
             continue; // can't read filename
         }
@@ -1065,15 +1059,9 @@ void store_3mf(const std::string& filepath, const Domain::Project& project, cons
     CNumericLocalesSetter locales_setter;
 
     // open zip archive
-    mz_zip_archive archive;
-    mz_zip_archive* archive_ptr = &archive;
-    mz_zip_zero_struct(archive_ptr);
-    if (!open_zip_writer(archive_ptr, filepath))
+    ZipArchive archive = ZipArchive::open(filepath, ZipArchive::Mode::Write);
+    if (!archive.is_open())
         throw boost::filesystem::filesystem_error("Unable to open Zip writer to the file.", {});
-    ScopeGuard sg_archive([&archive_ptr]() {
-        if (archive_ptr)
-            close_zip_writer(archive_ptr);
-    });
 
     // First of all should be in archive stored relations,
     // when you read it you need to know where is root model
@@ -1093,10 +1081,14 @@ void store_3mf(const std::string& filepath, const Domain::Project& project, cons
     store_content_type(archive, content_types);
 
     // Write thumbnail into 3mf file
-    if (!relations.thumbnail_path.empty() && param.thumbnail != nullptr && ImageUtils::is_valid(*param.thumbnail))
+    if (!relations.thumbnail_path.empty()
+        && param.thumbnail != nullptr
+        && ImageUtils::is_valid(*param.thumbnail))
     {
         // Adds the file Metadata/thumbnail.png.
-        store_thumbnail(archive, *param.thumbnail, relations.thumbnail_path.c_str());
+        if (!archive.add_entry_image(relations.thumbnail_path, *param.thumbnail)) {
+            SPDLOG_WARN("Could not add Metadata/thumbnail.png into archive");
+        }
     }
 
     // Adds model file ("3D/3dmodel.model").
@@ -1111,13 +1103,9 @@ void store_3mf(const std::string& filepath, const Domain::Project& project, cons
         stored_structure
     );
 
-    if (!mz_zip_writer_finalize_archive(archive_ptr))
-        throw boost::filesystem::filesystem_error("Unable to finalize the archive.", {});
-
-    // Set off ScopeGuard sg_archive
-    archive_ptr = nullptr;
-    if (!close_zip_writer(&archive))
+    if (!archive.close()) {
         throw boost::filesystem::filesystem_error("Unable to close zip writer.", {});
+    }
 }
 
 static Domain::Image resize_and_crop(
@@ -1165,30 +1153,21 @@ static Domain::Image resize_and_crop(
 
 std::vector<Domain::Image> get_thumbnail_images_from_3mf(const std::string& input_file, const std::vector<Domain::Size>& sizes)
 {
-    mz_zip_archive archive;
-    mz_zip_zero_struct(&archive);
-
-    if (!open_zip_reader(&archive, input_file))
+    ZipArchive archive = ZipArchive::open(input_file, ZipArchive::Mode::Read);
+    if (!archive.is_open())
         return {};
 
-    int index = mz_zip_reader_locate_file(&archive, "Metadata/thumbnail.png", nullptr, 0);
-    if (index < 0) {
-        close_zip_reader(&archive);
+    int index = archive.locate_file("Metadata/thumbnail.png");
+    if (index < 0)
         return {};
-    }
 
     mz_zip_archive_file_stat stat;
-    if (!mz_zip_reader_file_stat(&archive, index, &stat)) {
-        close_zip_reader(&archive);
+    if (!archive.stat_file(index, stat))
         return {};
-    }
 
     std::string buffer;
     buffer.resize(int(stat.m_uncomp_size));
-    mz_bool res = mz_zip_reader_extract_file_to_mem(&archive, stat.m_filename, buffer.data(), (size_t)stat.m_uncomp_size, 0);
-    close_zip_reader(&archive);
-
-    if (res == 0)
+    if (!archive.extract_entry_to(index, buffer.data(), (size_t)stat.m_uncomp_size))
         return {};
 
     std::vector<unsigned char> data;

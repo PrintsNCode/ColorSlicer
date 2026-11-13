@@ -15,7 +15,7 @@
 #include <utility>
 #include <vector>
 
-#include <miniz.h> // mz_zip_archive
+#include "Slic3r/Biz/Algorithms/ZipArchive.hpp"
 
 namespace Slic3r::Domain {
 class ConfigContainer;
@@ -42,7 +42,7 @@ std::map<std::string, std::string> parse_project_settings_json(const std::string
 Settings translate(const std::map<std::string, std::string>& foreign);
 
 // Reads Metadata/project_settings.config from the archive. Empty when absent/invalid.
-Settings read_from_archive(mz_zip_archive& archive);
+Settings read_from_archive(Algorithms::ZipArchive& archive);
 
 // Writes the settings into the selected print preset values of the container
 // (FDM only). Only values that really differ are changed.

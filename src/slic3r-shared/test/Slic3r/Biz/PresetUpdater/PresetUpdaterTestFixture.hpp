@@ -52,6 +52,25 @@ inline const std::string k_server_addr   = "http://localhost:8000/";
 using ResponseMutator =
     std::function<void(const std::string& url, std::string& body, unsigned& status)>;
 
+/// Copies only the .idx files, keeping the directory layout they sit in.
+inline void copy_index_tree(const fs::path& from, const fs::path& to)
+{
+    ASSERT(fs::exists(from) && fs::is_directory(from));
+    boost::system::error_code ec;
+    for (fs::recursive_directory_iterator it(from); it != fs::recursive_directory_iterator();
+         it.increment(ec)) {
+        ASSERT(!ec);
+        if (!fs::is_regular_file(it->status()) || it->path().extension() != ".idx") {
+            continue;
+        }
+        const fs::path dest_path = to / it->path().lexically_relative(from);
+        if (!fs::exists(dest_path.parent_path())) {
+            fs::create_directories(dest_path.parent_path());
+        }
+        fs::copy_file(it->path(), dest_path, fs::copy_options::overwrite_existing);
+    }
+}
+
 inline void copy_dir_content_local(const fs::path& from, const fs::path& to)
 {
     ASSERT(fs::exists(from) && fs::is_directory(from));
@@ -124,8 +143,10 @@ inline void deselect_every_source(const fs::path& manifest_path)
 }
 
 /// Adds a source the offline check will accept the id of. Nothing is served for it, which is all
-/// a check that only reads the data dir needs.
-inline void add_source_to_manifest(const fs::path& manifest_path, const std::string& id)
+/// a check that only reads the data dir needs. A non-empty visibility makes it a private source.
+inline void add_source_to_manifest(
+    const fs::path& manifest_path, const std::string& id, const std::string& visibility = ""
+)
 {
     nlohmann::json manifest = nlohmann::json::parse(read_file(manifest_path));
     manifest.push_back(
@@ -137,7 +158,7 @@ inline void add_source_to_manifest(const fs::path& manifest_path, const std::str
             {"selected", true},
             {"url", k_server_addr + id + "/"},
             {"uuid", "uuid-" + id},
-            {"visibility", ""}
+            {"visibility", visibility}
         }
     );
 
@@ -200,6 +221,7 @@ public:
         m_warnings.clear();
         m_finished.clear();
         m_payload_order.clear();
+        m_progress.clear();
     }
 
     bool has_result() const { return m_has_result; }
@@ -258,8 +280,12 @@ public:
         m_payload_order.push_back(job_id);
     }
 
-    void on_preset_updater_status(JobId, const std::string&, int, unsigned, VerboseStyle) override
-    {}
+    void on_preset_updater_status(
+        JobId, const PresetUpdaterProgress& progress, VerboseStyle
+    ) override
+    {
+        m_progress.push_back(progress);
+    }
 
     void on_preset_updater_repository_info_vector(
         JobId job_id,
@@ -313,6 +339,21 @@ public:
     /// Ids of the jobs that dispatched a payload, in the order the payloads arrived.
     const std::vector<JobId>& payload_order() const { return m_payload_order; }
 
+    /// Every progress report received, in order.
+    const std::vector<PresetUpdaterProgress>& progress() const { return m_progress; }
+
+    /// The progress reports that name a vendor, which is what the notification words.
+    std::vector<PresetUpdaterProgress> vendor_progress() const
+    {
+        std::vector<PresetUpdaterProgress> named;
+        for (const PresetUpdaterProgress& entry : m_progress) {
+            if (entry.step != PresetUpdaterStep::None) {
+                named.push_back(entry);
+            }
+        }
+        return named;
+    }
+
     size_t payload_count(JobId job_id) const
     {
         size_t count = 0;
@@ -347,6 +388,7 @@ private:
     std::vector<PresetUpdaterWarning> m_warnings;
     std::vector<std::pair<JobId, JobState>> m_finished;
     std::vector<JobId> m_payload_order;
+    std::vector<PresetUpdaterProgress> m_progress;
 };
 
 /// Sets up the mock-server world used by the preset updater tests and restores the global dirs it
@@ -419,6 +461,10 @@ struct Fixture
         fs::create_directories(temp_dir_path);
 
         Slic3r::set_temp_dir(temp_dir_path);
+        // Inside this fixture's own data dir, so cases cannot see each other's staged downloads
+        // and the whole updater footprint is removed with it.
+        Slic3r::set_updater_cache_dir((data_dir / "cache").string());
+        fs::create_directories(Slic3r::updater_staging_dir());
 
         fs::copy_file(
             resources_profile_path / "RepositoryManifest.json",
@@ -522,9 +568,10 @@ struct Fixture
         );
     }
 
+    /// update_sync records only what each source offers, so only the indices are staged.
     void put_staged(const std::string& version)
     {
-        copy_dir_content_local(resources_profile_path / ("resource" + version), staged_path);
+        copy_index_tree(resources_profile_path / ("resource" + version), staged_path);
     }
 
     bool wait(CaptureListener& listener, std::chrono::seconds timeout = 20s)
@@ -538,6 +585,14 @@ struct Fixture
     )
     {
         return pump([&listener, count]() { return listener.finished_count() >= count; }, timeout);
+    }
+
+    /// Pumps the dispatcher until the given job has reported a terminal state.
+    bool wait_for_job(
+        CaptureListener& listener, JobId job_id, std::chrono::seconds timeout = 20s
+    )
+    {
+        return pump([&listener, job_id]() { return listener.state_of(job_id).has_value(); }, timeout);
     }
 
     bool pump(const std::function<bool()>& done, std::chrono::seconds timeout = 20s)

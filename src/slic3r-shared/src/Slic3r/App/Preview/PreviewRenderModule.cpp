@@ -21,17 +21,18 @@
 #include "Slic3r/App/RenderModuleHelper.hpp"
 #include "Slic3r/App/SidebarStackLayout.hpp"
 #include "Slic3r/App/ColorMix/ColorMixDialog.hpp"
-#include "Slic3r/App/LogicalPrinterSettingsDialog.hpp"
-#include "Slic3r/App/PhysicalPrinterSettingsDialog.hpp"
-#include "Slic3r/App/PhysicalPrinterAdvancedSettingsDialog.hpp"
+#include "Slic3r/App/PrinterSettingsDialog.hpp"
+#include "Slic3r/App/PhysicalPrinterForm.hpp"
 #include "Slic3r/App/PrinterAdvancedSettingsDialog.hpp"
 #include "Slic3r/App/PrinterAddDialog.hpp"
 #include "Slic3r/App/PrintSettingsDialog.hpp"
-#include "Slic3r/App/MaterialSelectionDialog.hpp"
-#include "Slic3r/App/MaterialSettingsDialog.hpp"
+#include "Slic3r/App/Material/MaterialSelectionDialog.hpp"
+#include "Slic3r/App/Material/MaterialSettingsDialog.hpp"
+#include "Slic3r/App/PrintModeDialog.hpp"
 #include "Slic3r/App/InvalidDataDialog.hpp"
 #include "Slic3r/App/UIItemCommand.hpp"
 #include "Slic3r/App/AppConfig.hpp"
+#include "Slic3r/App/Config/ToolToFeatureDialog.hpp"
 
 #include "Slic3r/Domain/TriangleMesh.hpp"
 
@@ -68,6 +69,26 @@ namespace CustomGCode = Domain::CustomGCode;
 
 using CommandName          = Platform::CommandName;
 using FuncCommandExtraOpts = Platform::FuncCommandExtraOpts;
+
+// Maps an OptionType to the AppConfig key used to persist its visibility
+// (Slic3r::App::libvgcode::Settings::options_visibility).
+static const char* option_visibility_app_config_key(OptionType type)
+{
+    switch (type) {
+    case OptionType::Travels:          return "show_travels_in_preview";
+    case OptionType::Wipes:            return "show_wipes_in_preview";
+    case OptionType::Retractions:      return "show_retractions_in_preview";
+    case OptionType::Unretractions:    return "show_unretractions_in_preview";
+    case OptionType::Seams:            return "show_seams_in_preview";
+    case OptionType::ToolChanges:      return "show_tool_changes_in_preview";
+    case OptionType::ColorChanges:     return "show_color_changes_in_preview";
+    case OptionType::PausePrints:      return "show_pause_prints_in_preview";
+    case OptionType::CustomGCodes:     return "show_custom_gcodes_in_preview";
+    case OptionType::CenterOfGravity:  return "show_center_of_gravity_in_preview";
+    case OptionType::ToolMarker:       return "show_tool_marker_in_preview";
+    default:                           ASSERT(false); return "";
+    }
+}
 
 PreviewRenderModule::~PreviewRenderModule()
 {
@@ -295,6 +316,11 @@ void PreviewRenderModule::on_scene_mouse_event(const Platform::MouseEvent& e)
     m_gizmo_manager->on_scene_mouse_event(e, m_screen_info);
 }
 
+void PreviewRenderModule::on_frame_begin()
+{
+    this->apply_mouse_3d_input(m_scene_presenter->scene());
+}
+
 void PreviewRenderModule::on_selected_bed_instances_changed(
     Domain::SelectionId project_id,
     const Biz::Scene::BedSelection& selection
@@ -415,8 +441,20 @@ void PreviewRenderModule::set_modal_dialog(ModalDialog modal_dialog)
     handle_dialog(m_preferences_dialog.get(), ModalDialog::Preferences);
     handle_dialog(m_crashed_projects_dialog.get(), ModalDialog::CrashedProjects);
     handle_dialog(m_preset_updater_dialog.get(), ModalDialog::PresetUpdater);
+    handle_dialog(m_invalid_data_dialog.get(), ModalDialog::InvalidData);
+    handle_dialog(m_effective_values_dialog.get(), ModalDialog::EffectiveValues);
+    if (modal_dialog == ModalDialog::MsgBox) {
+        msg_box_handler()->open_modal();
+    } else {
+        msg_box_handler()->close_modal();
+    }
 
     request_render();
+}
+
+MsgBoxHandler* PreviewRenderModule::msg_box_handler()
+{
+    return &m_layout->msg_box_handler();
 }
 
 void PreviewRenderModule::on_init(
@@ -626,7 +664,7 @@ void PreviewRenderModule::register_commands()
         {CommandName::ShowRetractions, OptionType::Retractions},
         {CommandName::ShowUnretractions, OptionType::Unretractions},
         {CommandName::ShowSeams, OptionType::Seams},
-        {CommandName::ShowToolChanges, OptionType::ToolMarker},
+        {CommandName::ShowToolChanges, OptionType::ToolChanges},
         {CommandName::ShowColorChanges, OptionType::ColorChanges},
         {CommandName::ShowPausePrints, OptionType::PausePrints},
         {CommandName::ShowCustomGCodes, OptionType::CustomGCodes},
@@ -640,6 +678,10 @@ void PreviewRenderModule::register_commands()
                 [this, option_type]()
                 {
                     m_fdm_viewer.toggle_option_visibility(option_type);
+                    AppServices::instance().app_config().set(
+                        option_visibility_app_config_key(option_type),
+                        m_fdm_viewer.is_option_visible(option_type)
+                    );
                     if (option_type == OptionType::ToolMarker) {
                         update_scene_aabb();
                     }
@@ -722,9 +764,13 @@ void PreviewRenderModule::init_viewers(Render::Device& device)
     // Initialize the SLA ViewerWrapper
 
     ViewerWrapperBaseSettings base_settings;
-    base_settings.layers_slider_base_flags.show_ruler           = app_config.get<bool>("show_ruler_in_dbl_slider");
-    base_settings.layers_slider_base_flags.show_ruler_bg        = app_config.get<bool>("show_ruler_bg_in_dbl_slider");
-    base_settings.layers_slider_base_flags.show_estimated_times = app_config.get<bool>("show_estimated_times_in_dbl_slider");
+    base_settings.navigator = m_render_module_navigator;
+    base_settings.layers_slider_base_flags.show_ruler =
+        app_config.get<bool>("show_ruler_in_dbl_slider");
+    base_settings.layers_slider_base_flags.show_ruler_bg =
+        app_config.get<bool>("show_ruler_bg_in_dbl_slider");
+    base_settings.layers_slider_base_flags.show_estimated_times =
+        app_config.get<bool>("show_estimated_times_in_dbl_slider");
     // set layers slider callbacks
     base_settings.layers_slider_base_callbacks.on_thumb_move =
         std::bind(&PreviewRenderModule::on_slider_layers_on_thumb_move, this);
@@ -751,9 +797,14 @@ void PreviewRenderModule::init_viewers(Render::Device& device)
     FdmViewerWrapperSettings settings;
     settings.ViewerWrapperBaseSettings::operator=(base_settings);
 
+    settings.navigator                        = m_render_module_navigator;
     settings.mode                             = mode;
     settings.slider_layers_use_default_colors = app_config.get<bool>("use_default_colors_in_dbl_slider");
     settings.seq_top_layer_only               = app_config.get<bool>("seq_top_layer_only");
+    for (size_t i = 0; i < settings.options_visibility.size(); ++i) {
+        settings.options_visibility[i] =
+            app_config.get<bool>(option_visibility_app_config_key(OptionType(i)));
+    }
     // set wrapper callbacks
     settings.cb_invalidate_slice = std::bind(&PreviewRenderModule::on_invalidate_slice, this);
     settings.cb_update_layers_slider =
@@ -811,11 +862,11 @@ void PreviewRenderModule::init_scene_layout()
         *m_render_module_navigator
     );
 
-    m_number_entry_dialog = std::make_unique<NumberEntryDialog>(
+    m_invalid_data_dialog = std::make_unique<InvalidDataDialog>(
+        m_project_interactor,
         *m_render_module_navigator
     );
-
-    m_invalid_data_dialog = std::make_unique<InvalidDataDialog>(
+    m_effective_values_dialog = std::make_unique<EffectiveValuesDialog>(
         m_project_interactor,
         *m_render_module_navigator
     );
@@ -837,14 +888,13 @@ void PreviewRenderModule::init_scene_layout()
         m_plugin_system
     );
 
-    m_object_list = Passthrough(std::make_unique<ObjectListWindow>(&m_project_interactor, false));
+    m_object_list = Passthrough(std::make_unique<ObjectListWindow>(m_project_interactor, false));
     m_object_list->set_collapsed(m_render_module_navigator->object_list_collapsed());
 
     m_cube_view   = std::make_unique<CubeView>();
     m_sidebar_bed = std::make_unique<SidebarBed>(m_project_interactor, *m_render_module_navigator);
     m_sidebar_print =
         std::make_unique<SidebarPrint>(m_project_interactor, *m_render_module_navigator);
-    m_sidebar_object             = std::make_unique<SidebarObject>(m_project_interactor);
     m_pop_notification_list_view = std::make_unique<PopNotification::PopNotificationListView>(
         AppServices::instance().pop_notification_center().observable_list()
     );
@@ -863,7 +913,6 @@ void PreviewRenderModule::init_scene_layout()
         m_pop_notification_list_view.release(),
         m_sidebar_bed.release(),
         m_sidebar_print.release(),
-        m_sidebar_object.release(),
         m_sidebar_action_buttons.release(),
         m_gcode_window.release(),
         m_legend.release(),
@@ -871,8 +920,8 @@ void PreviewRenderModule::init_scene_layout()
         m_sla_slider_layers.release(),
         m_slider_gcode.release(),
         m_sidebar_auto_reslice.release(),
-        m_number_entry_dialog.release(),
         m_invalid_data_dialog.release(),
+        m_effective_values_dialog.release(),
         m_crashed_projects_dialog.release(),
         m_preset_updater_dialog.release()
     ));
@@ -975,7 +1024,7 @@ void PreviewRenderModule::init_scene_layout()
         ToolbarID::Mode,
         Render::Icon::ObjectIcon,
         _u8L("Prepare"),
-        _u8L("Prepare Mode"),
+        _u8L("Prepare mode"),
         ToolBarSwitchButton::SwitchPosition::Left
     );
 
@@ -983,7 +1032,7 @@ void PreviewRenderModule::init_scene_layout()
         ToolbarID::Mode,
         Render::Icon::Preview,
         _u8L("Preview"),
-        _u8L("Preview Mode"),
+        _u8L("Preview mode"),
         ToolBarSwitchButton::SwitchPosition::Right
     );
     preview_button->set_checked(true);
@@ -1020,7 +1069,7 @@ void PreviewRenderModule::update_toolbar_visibility()
     m_button_tool_marker->set_visible(fdm_has_gcode);
     m_button_shells
         ->set_visible(fdm_has_gcode /*m_fdm_viewer.mode() != FdmViewerWrapperMode::GCodeViewer*/);
-    m_button_wipes->set_visible(fdm_has_gcode);
+    m_button_wipes->set_visible(fdm_has_gcode && fdm_has_option(OptionType::Wipes));
 
     // m_button_gcode_inspect
 }
@@ -1033,14 +1082,8 @@ void PreviewRenderModule::init_dialog_navigation()
         &m_sidebar_bed->printer_add_dialog(),
         &m_sidebar_bed->logical_printer_settings_dialog()
     );
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_bed->logical_printer_settings_dialog().printer_advanced_settings_dialog(),
-        &m_sidebar_bed->logical_printer_settings_dialog()
-    );
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_bed->logical_printer_settings_dialog().color_mix_dialog(),
-        &m_sidebar_bed->logical_printer_settings_dialog()
-    );
+    m_dialog_navigation.insert_dialog(&m_sidebar_bed->printer_advanced_settings_dialog());
+    m_dialog_navigation.insert_dialog(&m_sidebar_bed->color_mix_dialog());
 
     m_dialog_navigation.insert_dialog(&m_sidebar_bed->material_selection_dialog());
     m_dialog_navigation.insert_dialog(
@@ -1049,14 +1092,11 @@ void PreviewRenderModule::init_dialog_navigation()
     );
 
     m_dialog_navigation.insert_dialog(&m_sidebar_print->print_settings_dialog());
+    m_dialog_navigation.insert_dialog(m_sidebar_print->tool_to_feature_dialog());
+    m_dialog_navigation.insert_dialog(&m_sidebar_print->print_mode_dialog());
     m_dialog_navigation.insert_dialog(m_invalid_data_dialog.get());
+    m_dialog_navigation.insert_dialog(m_effective_values_dialog.get());
     m_dialog_navigation.insert_dialog(m_preset_updater_dialog.get());
-
-    m_dialog_navigation.insert_dialog(&m_sidebar_action_buttons->physical_printer_settings_dialog());
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_action_buttons->physical_printer_advanced_settings_dialog(),
-        &m_sidebar_action_buttons->physical_printer_settings_dialog()
-    );
 }
 
 void PreviewRenderModule::update_fdm_viewer_data(const Domain::SlicingId id)

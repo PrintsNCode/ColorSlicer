@@ -9,6 +9,7 @@
 #include <boost/uuid/uuid_io.hpp> // uuid to stream
 #include <boost/algorithm/string.hpp>
 #include <expat.h>
+#include <fmt/format.h>
 #include "Slic3r/Biz/Format/Metadata.hpp"
 #include "Relations.hpp"
 #include "Slic3r/Domain/Constants.hpp"
@@ -16,6 +17,7 @@
 #include "Slic3r/Biz/Algorithms/TriangleMesh.hpp"
 #include "Slic3r/Biz/Algorithms/Geometry/Geometry.hpp"
 #include "Slic3r/Biz/Format/ResultLoad3mf.hpp"
+#include "Slic3r/Biz/I18N/I18N.hpp"
 #include "Slic3r/Biz/Utils/XmlEscape.hpp"
 #include "Slic3r/Biz/Format/3mf/LegacyPaintingCompat.hpp"
 #include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
@@ -24,7 +26,6 @@
 #include "LocalesUtils.hpp" // CNumericLocalesSetter
 
 #include <boost/spirit/include/karma.hpp>
-#include <libdeflate.h> // ZipBackend::Compressed
 
 #include "Slic3r/Utils.hpp" // ScopeGuard
 #include "Slic3r/Version.hpp"
@@ -1047,6 +1048,17 @@ bool is_old_stored_version(const ModelMetadata &meta) {
     return true;
 }
 
+// PrusaSlicer < 2.3 did not store the "Application" metadata, only "slic3rpe:Version3mf".
+// Such 3mf has to be loaded by the "legacy" parser as well.
+bool is_stored_without_application_metadata(const format_3MF::Model &model) {
+    auto has_metadata = [&model](ModelMetadataNames name) {
+        return std::any_of(model.metadata.begin(), model.metadata.end(), [name](const ModelMetadata &m) {
+            return std::holds_alternative<ModelMetadataNames>(m.name) && std::get<ModelMetadataNames>(m.name) == name;
+        });
+    };
+    return has_metadata(ModelMetadataNames::Slic3r_version) && !has_metadata(ModelMetadataNames::Application);
+}
+
 void process_xml_characters(LoadContext& context) {
     const std::string& text = context.xml_characters;
 
@@ -1129,14 +1141,9 @@ void XMLCALL end_element_handler(void *user_data, const XML_Char *name) {
 
 }
 
-tl::expected<LoadedModelFile, Read3mfIssue> read_modelfile(mz_zip_archive &archive, int model_file_index, Read3mfIssues& collected_issues) {
-    // mz_zip_archive_file_stat stat;
-    // if (!mz_zip_reader_file_stat(&archive, model_file_index, &stat))
-    //     return Read3mfIssueType::cant_read_model_stats;
-    mz_uint flags = 0;
-    mz_zip_reader_extract_iter_state *iterator_ptr =
-        mz_zip_reader_extract_iter_new(&archive, model_file_index, flags);
-    if (iterator_ptr == nullptr)
+tl::expected<LoadedModelFile, Read3mfIssue> read_modelfile(ZipArchive &archive, int model_file_index, Read3mfIssues& collected_issues) {
+    std::optional<ZipArchive::ExtractIter> file_data_iterator = archive.extract_iter(model_file_index);
+    if (!file_data_iterator.has_value())
         return tl::make_unexpected(Read3mfIssue(Read3mfIssueType::cant_extract_iterator));
 
     // NULL if there is none specified
@@ -1146,7 +1153,6 @@ tl::expected<LoadedModelFile, Read3mfIssue> read_modelfile(mz_zip_archive &archi
         return tl::make_unexpected(Read3mfIssue(Read3mfIssueType::expat_cant_create_parser));
 
     ScopeGuard sg_parser([&xml_parser]() { XML_ParserFree(xml_parser); });
-    Slic3r::Biz::Algorithms::MzIterType file_data_iterator(iterator_ptr);
 
     // Parser data itss
     LoadContext context{&xml_parser, collected_issues};
@@ -1160,7 +1166,7 @@ tl::expected<LoadedModelFile, Read3mfIssue> read_modelfile(mz_zip_archive &archi
         if (buf == nullptr)
             return tl::make_unexpected(Read3mfIssue(Read3mfIssueType::expat_cant_create_buffer));
 
-        size_t readed = mz_zip_reader_extract_iter_read(file_data_iterator.get(), buf, nbyte);
+        size_t readed = file_data_iterator->read(buf, nbyte);
 
         // last readed chunk of data has different size
         done = (readed != nbyte);
@@ -1174,8 +1180,11 @@ tl::expected<LoadedModelFile, Read3mfIssue> read_modelfile(mz_zip_archive &archi
             std::string error_code_str = std::to_string(static_cast<int>(error_code));
             std::string error_message = XML_ErrorString(error_code);
             return tl::make_unexpected(Read3mfIssue(
-                Read3mfIssueType::expat_parse_error, std::nullopt, error_message + " (" + error_code_str + ")", line_number)
-            );
+                Read3mfIssueType::expat_parse_error,
+                fmt::format("{} at line {}", error_message, line_number),
+                error_message + " (" + error_code_str + ")",
+                line_number
+            ));
         }
     } while (!done);
 
@@ -1206,7 +1215,7 @@ bool is_valid_sub_model(const format_3MF::Model &model_3mf) {
     return true;
 }
 
-void append_sub_model(mz_zip_archive &archive, const std::string &filepath, LoadedModel& result, Read3mfIssues& collected_issues) {
+void append_sub_model(ZipArchive &archive, const std::string &filepath, LoadedModel& result, Read3mfIssues& collected_issues) {
     assert(!filepath.empty());
     if (filepath.empty())
         return; // invalid path
@@ -1218,7 +1227,7 @@ void append_sub_model(mz_zip_archive &archive, const std::string &filepath, Load
     if (*zip_path == '\\' || *zip_path == '/')
         ++zip_path;
 
-    int file_index = mz_zip_reader_locate_file(&archive, zip_path, nullptr, 0);
+    int file_index = archive.locate_file(zip_path);
     if (file_index < 0) {
         collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::unable_to_locate_model_file, filepath));
         return;
@@ -1242,8 +1251,8 @@ void append_sub_model(mz_zip_archive &archive, const std::string &filepath, Load
 
 } // namespace
 
-LoadedModel Slic3r::read_model3mf(mz_zip_archive &archive, const char * root_file_path, Read3mfIssues& collected_issues){
-    int root_model_file_index = mz_zip_reader_locate_file(&archive, root_file_path, nullptr, 0);
+LoadedModel Slic3r::read_model3mf(ZipArchive &archive, const char * root_file_path, Read3mfIssues& collected_issues){
+    int root_model_file_index = archive.locate_file(root_file_path);
     if (root_model_file_index < 0) {
         // 3mf without .model file is invalid.
         throw Slic3r::Loaded3MFException(Read3mfIssue(Read3mfIssueType::unable_to_locate_model_file, root_file_path));
@@ -1251,11 +1260,20 @@ LoadedModel Slic3r::read_model3mf(mz_zip_archive &archive, const char * root_fil
 
     tl::expected<LoadedModelFile, Read3mfIssue> root_model = read_modelfile(archive, root_model_file_index, collected_issues);
 
+    if (!root_model) {
+        // Without the root model there is nothing to load (e.g. its XML is not well-formed).
+        Read3mfIssue issue = root_model.error();
+        issue.msg = fmt::vformat(Biz::_u8L("Unable to read '{}': {}."), fmt::make_format_args(root_file_path, issue.msg));
+        throw Slic3r::Loaded3MFException(issue);
+    }
+
     LoadedModel result;
-    if (root_model)
-        result.model = std::move(*root_model.value().model);
-    result.used_files = std::vector<bool>(mz_zip_reader_get_num_files(&archive), {false});
+    result.model = std::move(root_model.value().model);
+    result.used_files = std::vector<bool>(archive.get_num_files(), {false});
     result.used_files[root_model_file_index] = true;
+
+    if (result.model.has_value() && is_stored_without_application_metadata(*result.model))
+        collected_issues.add_issue(Read3mfIssue(Read3mfIssueType::legacy_loader_required));
 
     if (!result.model.has_value() || collected_issues.has_issue(Read3mfIssueType::legacy_loader_required))
         return result;
@@ -1547,8 +1565,13 @@ void add_transformation(std::stringstream &stream, const Domain::Transform3d &tr
     }
 
     // The matrix SHOULD NOT be singular or nearly singular.
-    // NonSingular is also known as invertible matrix and have non zero determinant
-    assert(!is_approx(tr.matrix().determinant(), 0.));
+    // NonSingular is also known as invertible matrix and have non zero determinant.
+    // The determinant is normalized by the lengths of the basis vectors, so that the check
+    // is scale invariant (heavily downscaled objects have tiny, but valid, determinant).
+    const auto linear = tr.linear();
+    const double basis_volume = linear.col(0).norm() * linear.col(1).norm() * linear.col(2).norm();
+    ASSERT(basis_volume > 0. && std::abs(linear.determinant()) / basis_volume > Domain::EPSILON,
+        "Transformation matrix is singular or nearly singular.");
 
     // After applying all transforms to an object,
     // the model SHOULD have positive volume 
@@ -1653,7 +1676,7 @@ MeshToObjectid store_meshes(ZipSink& sink, const Slic3r::Domain::Model &model,
 
 enum class ZipBackend
 {
-    Compressed, // libdeflate
+    Compressed, // libdeflate, via ZipArchive::add_entry
     Uncompressed, // stored, no compression
 };
 
@@ -1661,7 +1684,7 @@ class ZipContextScoped
 {
 public:
     ZipContextScoped(
-        mz_zip_archive& archive,
+        ZipArchive& archive,
         const char* filepath,
         bool zip64,
         ZipBackend backend
@@ -1677,10 +1700,11 @@ public:
 
     ~ZipContextScoped()
     {
+        ASSERT(!exceeds_non_zip64_limit());
         if (m_backend == ZipBackend::Uncompressed) {
-            ASSERT(finish_uncompressed());
+            ASSERT(m_archive.add_entry_no_compression(m_filepath, m_buffer->data(), m_buffer->size()));
         } else {
-            ASSERT(finish_compressed());
+            ASSERT(m_archive.add_entry(m_filepath, m_buffer->data(), m_buffer->size()));
         }
     }
 
@@ -1690,86 +1714,15 @@ public:
     }
 
 private:
-    // mz_zip_writer_add_mem_ex_v2() has no max_size parameter; enforce the same
+    // ZipArchive::add_entry[_stored]() has no max_size parameter; enforce the same
     // non-zip64 4GiB-1 interop limit manually so param.zip64's intent still holds.
     bool exceeds_non_zip64_limit() const
     {
         return !m_zip64 && m_buffer->size() > (uint64_t(1) << 32) - 1;
     }
 
-    bool finish_uncompressed()
-    {
-        if (exceeds_non_zip64_limit()) {
-            return false;
-        }
-        // level_and_flags = 0 (no compression, no MZ_ZIP_FLAG_COMPRESSED_DATA): miniz
-        // auto-computes size/CRC and writes this entry with method "stored".
-        return mz_zip_writer_add_mem_ex_v2(
-            &m_archive,
-            m_filepath.c_str(),
-            m_buffer->data(),
-            m_buffer->size(),
-            nullptr,
-            0,
-            /*level_and_flags=*/0,
-            0,
-            0,
-            nullptr,
-            nullptr,
-            0,
-            nullptr,
-            0
-        );
-    }
-
-    bool finish_compressed()
-    {
-        if (exceeds_non_zip64_limit()) {
-            return false;
-        }
-
-        libdeflate_compressor* compressor = libdeflate_alloc_compressor(6);
-        if (compressor == nullptr) {
-            return false;
-        }
-        ScopeGuard sg_compressor([compressor]() { libdeflate_free_compressor(compressor); });
-
-        size_t bound = libdeflate_deflate_compress_bound(compressor, m_buffer->size());
-        std::string compressed(bound, '\0');
-        // Raw DEFLATE (not the zlib/gzip-wrapped variants) -- this is what a
-        // MZ_ZIP_FLAG_COMPRESSED_DATA entry with method MZ_DEFLATED expects.
-        size_t compressed_size = libdeflate_deflate_compress(
-            compressor,
-            m_buffer->data(),
-            m_buffer->size(),
-            compressed.data(),
-            compressed.size()
-        );
-        if (compressed_size == 0) {
-            return false;
-        }
-        compressed.resize(compressed_size);
-
-        return mz_zip_writer_add_mem_ex_v2(
-            &m_archive,
-            m_filepath.c_str(),
-            compressed.data(),
-            compressed.size(),
-            nullptr,
-            0,
-            MZ_ZIP_FLAG_COMPRESSED_DATA,
-            m_buffer->size(),
-            m_running_crc,
-            nullptr,
-            nullptr,
-            0,
-            nullptr,
-            0
-        );
-    }
-
     ZipBackend m_backend;
-    mz_zip_archive& m_archive;
+    ZipArchive& m_archive;
     std::string m_filepath;
     bool m_zip64 = true;
     mz_uint32 m_running_crc = MZ_CRC32_INIT;
@@ -1791,7 +1744,7 @@ R""""( </resources>
 
 // function to store meshes into separate file
 MeshToObjectid store_separate_meshes(
-    mz_zip_archive& archive,
+    ZipArchive& archive,
     const Slic3r::Domain::Model& model,
     bool zip64,
     unsigned& object_id,
@@ -2044,7 +1997,7 @@ CT_Metadata_Model &update(CT_Metadata_Model &metadata, const Slic3r::Domain::Mod
 }
 
 // NOTE: There can be more than one 3D payload in a 3MF Document, but only one primary 3D payload
-StoredStructure Slic3r::store_model3mf(mz_zip_archive &archive, const Domain::Model &model, const char* filepath, const Store3mfParam &param) {
+StoredStructure Slic3r::store_model3mf(ZipArchive &archive, const Domain::Model &model, const char* filepath, const Store3mfParam &param) {
     StoredStructure result;
 
     // Inside of 3mf model/resources/object id start with 1 is unique and increase every time when use

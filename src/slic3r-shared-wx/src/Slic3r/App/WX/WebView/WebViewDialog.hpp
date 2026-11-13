@@ -2,9 +2,11 @@
 
 #include "Slic3r/App/Browser/AbstractBrowserLogic.hpp"
 #include "Slic3r/App/WX/WebView/AbstractWebViewDialog.hpp"
+#include "Slic3r/App/WX/WebView/WebViewHost.hpp"
 #include "Slic3r/App/Browser/AbstractBrowserLogicCommandHandler.hpp"
 
 #include <wx/webview.h>
+#include <wx/sizer.h>
 #include <memory>
 #include <atomic>
 
@@ -27,7 +29,7 @@ public:
 
 private:
     std::unique_ptr<App::Browser::AbstractBrowserLogic> m_logic;
-    wxWebView* m_web_view;
+    WebViewHost m_host;
 
     void on_show(wxShowEvent& evt);
     void on_script_message(wxWebViewEvent& evt);
@@ -55,6 +57,8 @@ private:
     void load_error_page();
     void EndModal(int retCode) wxOVERRIDE;
     void do_reload();
+
+    wxBoxSizer* topsizer{nullptr};
 
 #ifdef DEBUG_URL_PANEL
     wxBoxSizer* bSizer_toolbar;

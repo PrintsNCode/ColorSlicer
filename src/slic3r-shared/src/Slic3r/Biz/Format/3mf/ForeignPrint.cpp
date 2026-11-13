@@ -388,18 +388,18 @@ Settings translate(const std::map<std::string, std::string>& foreign)
     return out;
 }
 
-Settings read_from_archive(mz_zip_archive& archive)
+Settings read_from_archive(Algorithms::ZipArchive& archive)
 {
-    const int index = mz_zip_reader_locate_file(&archive, "Metadata/project_settings.config", nullptr, 0);
+    const int index = archive.locate_file("Metadata/project_settings.config");
     if (index < 0) {
         return {};
     }
     mz_zip_archive_file_stat stat;
-    if (!mz_zip_reader_file_stat(&archive, static_cast<mz_uint>(index), &stat) || stat.m_uncomp_size == 0) {
+    if (!archive.stat_file(index, stat) || stat.m_uncomp_size == 0) {
         return {};
     }
     std::string text(static_cast<size_t>(stat.m_uncomp_size), '\0');
-    if (!mz_zip_reader_extract_to_mem(&archive, static_cast<mz_uint>(index), text.data(), text.size(), 0)) {
+    if (!archive.extract_entry_to(static_cast<mz_uint>(index), text.data(), text.size())) {
         return {};
     }
     return translate(parse_project_settings_json(text));

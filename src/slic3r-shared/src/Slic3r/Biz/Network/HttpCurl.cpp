@@ -112,7 +112,9 @@ HttpCurl::HttpCurl(RequestMethod request_method, std::string&& url, RetryFn fn) 
         throw Slic3r::RuntimeError(std::string("Could not construct Curl object"));
     }
 
-    std::string user_agent = fmt::format("%1%/%2% (%3%)",SLIC3R_APP_NAME, SLIC3R_VERSION, platform_to_string(platform()));
+    // boost::format placeholders (%1%) do nothing in fmt::format - this used to send
+    // the literal "{}/{} ({})" as the User-Agent on every request.
+    std::string user_agent = fmt::format("{}/{} ({})", SLIC3R_APP_NAME, SLIC3R_VERSION, platform_to_string(platform()));
 
     timeout_connection(DEFAULT_TIMEOUT_CONNECT);
     timeout_total(DEFAULT_TIMEOUT_MAX);
@@ -506,6 +508,17 @@ IHttp& HttpCurl::size_limit(size_t sizeLimit)
 IHttp& HttpCurl::set_range(const std::string& range)
 {
     ::curl_easy_setopt(m_curl.get(), CURLOPT_RANGE, range.c_str());
+    return *this;
+}
+
+IHttp& HttpCurl::restrict_redirects(long max_redirects)
+{
+    ::curl_easy_setopt(m_curl.get(), CURLOPT_MAXREDIRS, max_redirects);
+#if LIBCURL_VERSION_NUM >= 0x075500 // CURLOPT_REDIR_PROTOCOLS_STR is available since v7.85, CURLOPT_REDIR_PROTOCOLS deprecated.
+    ::curl_easy_setopt(m_curl.get(), CURLOPT_REDIR_PROTOCOLS_STR, "https");
+#else
+    ::curl_easy_setopt(m_curl.get(), CURLOPT_REDIR_PROTOCOLS, CURLPROTO_HTTPS);
+#endif
     return *this;
 }
 

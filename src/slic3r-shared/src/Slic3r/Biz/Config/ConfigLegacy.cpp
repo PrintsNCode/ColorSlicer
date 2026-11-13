@@ -1,6 +1,7 @@
 #include "Slic3r/Biz/Config/ConfigLegacy.hpp"
 #include "Slic3r/Domain/Config.hpp"
 #include "Slic3r/Domain/Types.hpp"
+#include "Slic3r/Domain/MacroOverrides.hpp"
 #include "Slic3r/Domain/Model.hpp"
 #include "Slic3r/Log.hpp"
 
@@ -132,7 +133,7 @@ namespace {
                 "top_solid_infill_speed", "top_solid_layers", "top_solid_min_thickness", "travel_acceleration",
                 "travel_lift_before_obstacle", "travel_max_lift", "travel_ramping_lift",
                 "travel_short_distance_acceleration", "travel_slope", "travel_speed",
-                "travel_speed_z", "use_firmware_retraction", "use_relative_e_distances", "use_volumetric_e",
+                "travel_speed_z", "use_firmware_retraction", "use_relative_e_distances", "use_volumetric_e", "used_filament_compensation",
                 "variable_layer_height", "wall_distribution_count", "wall_transition_angle", "wall_transition_filter_deviation",
                 "wall_transition_length", "wipe", "wipe_into_infill", "wipe_into_objects", "wipe_tower", "wipe_tower_acceleration",
                 "wipe_tower_bridging", "wipe_tower_brim_width", "wipe_tower_cone_angle", "wipe_tower_extra_flow",
@@ -684,6 +685,15 @@ ConfigPack convert_dynamic_print_config_to_new(Slic3rLegacy::DynamicPrintConfig&
             }
 
             fill_config_box_from_legacy(cfg, out.project, legacy_data);
+
+            ConfigItem& spiral_vase{out.print.items.opt("spiral_vase")};
+            if (spiral_vase.get<bool>()) {
+                spiral_vase.set(false);
+                out.macro_overrides.insert_or_assign(
+                    Domain::vase_mode_layer_id(),
+                    Domain::make_vase_mode_layer(out.filament.size())
+                );
+            }
             return out;
         }
         else if (pt == Slic3rLegacy::ptSLA) {
@@ -692,6 +702,7 @@ ConfigPack convert_dynamic_print_config_to_new(Slic3rLegacy::DynamicPrintConfig&
             fill_config_box_from_legacy(cfg, out.sla_printer_settings, legacy_data);
             fill_config_box_from_legacy(cfg, out.sla_material_settings, legacy_data);
             fill_config_box_from_legacy(cfg, out.sla_print_settings, legacy_data);
+            fill_config_box_from_legacy(cfg, out.sla_project_settings, legacy_data);
             return out;
         }
     }
@@ -849,6 +860,7 @@ std::string serialize_as_legacy_config(
         boxes.emplace_back(&cfg.sla_printer_settings, -1);
         boxes.emplace_back(&cfg.sla_material_settings, -1);
         boxes.emplace_back(&cfg.sla_print_settings, -1);
+        boxes.emplace_back(&cfg.sla_project_settings, -1);
     }
 
     std::unique_ptr<Slic3rLegacy::DynamicPrintConfig> cfg_old(Slic3rLegacy::DynamicPrintConfig::new_from_defaults_keys(legacy_data.keys));

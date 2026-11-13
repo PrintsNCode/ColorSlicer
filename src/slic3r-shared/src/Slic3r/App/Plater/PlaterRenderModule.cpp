@@ -1,8 +1,6 @@
 #include "Slic3r/App/Plater/PlaterRenderModule.hpp"
 
 #include "Slic3r/Directories.hpp"
-#include "Slic3r/Domain/Bed.hpp"
-#include "Slic3r/Domain/BedInstance.hpp"
 #include "Slic3r/Domain/Types.hpp"
 #include "Slic3r/Domain/Image.hpp"
 
@@ -10,7 +8,6 @@
 #include "Slic3r/Biz/I18N/I18N.hpp"
 
 #include "Slic3r/App/Scene/NodeBuilder.hpp"
-#include "Slic3r/App/Scene/NodeVisitor.hpp"
 #include "Slic3r/App/Scene/LightingHelper.hpp"
 #include "Slic3r/App/Scene/MouseDragDetector.hpp"
 #include "Slic3r/App/Scene/BedMaterials.hpp"
@@ -18,13 +15,8 @@
 #include "Slic3r/App/Render/Device.hpp"
 #include "Slic3r/App/Render/ScopedDebugGroup.hpp"
 #include "Slic3r/App/Render/GeometryBuilder.hpp"
-#include "Slic3r/Domain/Image.hpp"
 #include "Slic3r/App/Plater/PlaterCameraGizmo.hpp"
-#include "Slic3r/App/Scene/SceneNodeTag.hpp"
-#include "Slic3r/App/Plater/GizmoNodeTag.hpp"
-#include "Slic3r/App/Scene/BedNodeTag.hpp"
 #include "Slic3r/App/Scene/BedMaterials.hpp"
-#include "Slic3r/App/Scene/BedRenderHelper.hpp"
 #include "Slic3r/App/Scene/EmbossCreate.hpp"
 #include "Slic3r/App/Plater/QuickSelectGizmo.hpp"
 #include "Slic3r/App/Plater/QuickDragGizmo.hpp"
@@ -37,6 +29,8 @@
 #include "Slic3r/App/Plater/SimplifyNotification.hpp"
 #include "Slic3r/App/Plater/PaintOnSupportsGizmo.hpp"
 #include "Slic3r/App/Plater/PaintOnSupportsDialog.hpp"
+#include "Slic3r/App/Plater/SlaHollowGizmo.hpp"
+#include "Slic3r/App/Plater/SlaSupportPointsGizmo.hpp"
 #include "Slic3r/App/Plater/PaintOnSeamsGizmo.hpp"
 #include "Slic3r/App/Plater/PaintOnSeamsDialog.hpp"
 #include "Slic3r/App/Plater/PaintOnFuzzySkinGizmo.hpp"
@@ -83,23 +77,23 @@
 #include "Slic3r/App/TopBar.hpp"
 #include "Slic3r/App/Wildcards.hpp"
 #include "Slic3r/App/PreferencesDialog.hpp"
-#include "Slic3r/App/NumberEntryDialog.hpp"
 #include "Slic3r/App/InvalidDataDialog.hpp"
 #include "Slic3r/App/SidebarStackLayout.hpp"
 #include "Slic3r/App/ColorMix/ColorMixDialog.hpp"
-#include "Slic3r/App/LogicalPrinterSettingsDialog.hpp"
-#include "Slic3r/App/PhysicalPrinterSettingsDialog.hpp"
-#include "Slic3r/App/PhysicalPrinterAdvancedSettingsDialog.hpp"
+#include "Slic3r/App/PrinterSettingsDialog.hpp"
+#include "Slic3r/App/PhysicalPrinterForm.hpp"
 #include "Slic3r/App/PrinterAdvancedSettingsDialog.hpp"
-#include "Slic3r/App/MaterialSelectionDialog.hpp"
-#include "Slic3r/App/MaterialSettingsDialog.hpp"
+#include "Slic3r/App/Material/MaterialSelectionDialog.hpp"
+#include "Slic3r/App/Material/MaterialSettingsDialog.hpp"
 #include "Slic3r/App/PrintSettingsDialog.hpp"
+#include "Slic3r/App/PrintModeDialog.hpp"
 #include "Slic3r/App/PrinterAddDialog.hpp"
 #include "Slic3r/App/PresetUpdater/PresetUpdaterDialog.hpp"
 #include "Slic3r/App/UIItemCommand.hpp"
 #include "Slic3r/App/MenuBuilder.hpp"
 #include "Slic3r/App/AppConfig.hpp"
 #include "Slic3r/App/Config/ConfigItemControl.hpp"
+#include "Slic3r/App/Config/ToolToFeatureDialog.hpp"
 #include "Slic3r/App/Lua/PluginDialog.hpp"
 #include "Slic3r/App/CrashedProjectsDialog.hpp"
 
@@ -139,10 +133,11 @@ PlaterRenderModule::PlaterRenderModule(
     m_undo_store(undo_store),
     m_font_manager(std::move(font_manager)),
     m_plugin_system(
-        {resources_dir() + "/lua", data_dir() + "/lua"},
+        {{resources_dir() + "/lua", true}, {data_dir() + "/lua", false}},
         project_interactor,
         *m_font_manager
     ),
+    m_print_mode_plugins(m_plugin_system, project_interactor.print_mode_interactor()),
     m_thumbnail_store(thumbnail_store),
     m_thumbnail_store_updater(thumbnail_store_updater),
     m_thumbnail_image_generator(thumbnail_image_generator),
@@ -164,7 +159,8 @@ PlaterRenderModule::~PlaterRenderModule()
 
 void PlaterRenderModule::set_modal_dialog(ModalDialog modal_dialog)
 {
-    auto handle_dialog = [&](Yoga::Popup* dialog, ModalDialog modal){
+    auto handle_dialog = [&](Yoga::Popup* dialog, ModalDialog modal)
+    {
         if (modal_dialog == modal) {
             dialog->open();
         } else {
@@ -174,28 +170,22 @@ void PlaterRenderModule::set_modal_dialog(ModalDialog modal_dialog)
 
     handle_dialog(m_preferences_dialog.get(), ModalDialog::Preferences);
     handle_dialog(m_welcome_dialog.get(), ModalDialog::Welcome);
-    handle_dialog(m_number_entry_dialog.get(), ModalDialog::NumberEntry);
     handle_dialog(m_crashed_projects_dialog.get(), ModalDialog::CrashedProjects);
     handle_dialog(m_preset_updater_dialog.get(), ModalDialog::PresetUpdater);
+    handle_dialog(m_invalid_data_dialog.get(), ModalDialog::InvalidData);
+    handle_dialog(m_effective_values_dialog.get(), ModalDialog::EffectiveValues);
+    if (modal_dialog == ModalDialog::MsgBox) {
+        msg_box_handler()->open_modal();
+    } else {
+        msg_box_handler()->close_modal();
+    }
 
     request_render();
 }
 
-void PlaterRenderModule::get_user_number_and_process(
-    const std::string& message,
-    const std::string& prompt,
-    const std::string& title,
-    int value,
-    int min,
-    int max,
-    std::function<void(int)> on_process
-)
+MsgBoxHandler* PlaterRenderModule::msg_box_handler()
 {
-    if (m_number_entry_dialog.get()) {
-        m_number_entry_dialog
-            ->get_user_number_and_process(message, prompt, title, value, min, max, on_process);
-        set_opened_dialog(m_number_entry_dialog.get());
-    }
+    return &m_layout->msg_box_handler();
 }
 
 Scene::IToolGizmo* PlaterRenderModule::tool_gizmo(Scene::ToolType type, Domain::PrinterTechnology pt)
@@ -215,9 +205,7 @@ Lua::PluginSystem& PlaterRenderModule::plugin_system()
 
 void PlaterRenderModule::navigate_to_item(const Domain::ConfigItem* config_item)
 {
-    m_sidebar_bed->logical_printer_settings_dialog()
-        .printer_advanced_settings_dialog()
-        .clear_navigation();
+    m_sidebar_bed->printer_advanced_settings_dialog().clear_navigation();
     m_sidebar_print->print_settings_dialog().clear_navigation();
     m_sidebar_bed->material_selection_dialog().material_settings_dialog().clear_navigation();
     m_sidebar_print->print_settings_dialog().clear_navigation();
@@ -233,8 +221,7 @@ void PlaterRenderModule::navigate_to_item(const Domain::ConfigItem* config_item)
             if constexpr (std::is_same_v<T, Domain::FDMConfigLocation>) {
                 switch (location) {
                 case Domain::FDMConfigLocation::Printer:
-                    dialog_to_open = &m_sidebar_bed->logical_printer_settings_dialog()
-                                          .printer_advanced_settings_dialog();
+                    dialog_to_open = &m_sidebar_bed->printer_advanced_settings_dialog();
                     break;
                 case Domain::FDMConfigLocation::Print:
                     dialog_to_open = &m_sidebar_print->print_settings_dialog();
@@ -252,8 +239,7 @@ void PlaterRenderModule::navigate_to_item(const Domain::ConfigItem* config_item)
             } else if constexpr (std::is_same_v<T, Domain::SLAConfigLocation>) {
                 switch (location) {
                 case Domain::SLAConfigLocation::Printer:
-                    dialog_to_open = &m_sidebar_bed->logical_printer_settings_dialog()
-                                          .printer_advanced_settings_dialog();
+                    dialog_to_open = &m_sidebar_bed->printer_advanced_settings_dialog();
                     break;
                 case Domain::SLAConfigLocation::Print:
                     dialog_to_open = &m_sidebar_print->print_settings_dialog();
@@ -349,7 +335,7 @@ void PlaterRenderModule::on_init(
     update_object_selection();
 
     if (!AppServices::instance().app_config().get<bool>("initialized")) {
-        m_welcome_dialog->open();
+        m_render_module_navigator->set_modal_dialog(ModalDialog::Welcome);
     }
 }
 
@@ -462,6 +448,29 @@ void PlaterRenderModule::register_commands()
                 }
             )
         )
+        // Command for renaming the selected object/volume in the object list
+        .register_command(
+            std::make_unique<UIItemCommand>(
+                CommandName::RenameSelected,
+                [this]() { m_object_list->start_renaming_selected(); },
+                UIItemCommandExtraOpts{
+                    .enabled =
+                        [this]()
+                    {
+                        const Biz::Scene::ObjectSelection& selection =
+                            m_project_interactor.scene_interactor().object_selection();
+                        if (selection.empty()) {
+                            return false;
+                        }
+                        if (selection.mode == Slic3r::Biz::Scene::SelectionMode::Volume) {
+                            return selection.elements.size() == 1;
+                        }
+                        return selection.mode == Slic3r::Biz::Scene::SelectionMode::Instance
+                            && selection.only_single_object();
+                    }
+                }
+            )
+        )
         .register_command(
             std::make_unique<UIItemCommand>(
                 CommandName::DeactivateCurrentGizmo,
@@ -547,18 +556,18 @@ void PlaterRenderModule::init_scene_layout()
         *m_render_module_navigator
     );
 
-    m_number_entry_dialog = std::make_unique<NumberEntryDialog>(
-        *m_render_module_navigator
-    );
-
     m_preset_updater_dialog = std::make_unique<PresetUpdaterDialog>(
         AppServices::instance().preset_updater_controller(),
         *m_render_module_navigator
     );
 
-    m_welcome_dialog = std::make_unique<WelcomeDialog>(m_project_interactor);
+    m_welcome_dialog = std::make_unique<WelcomeDialog>(m_project_interactor, *m_render_module_navigator);
 
     m_invalid_data_dialog = std::make_unique<InvalidDataDialog>(
+        m_project_interactor,
+        *m_render_module_navigator
+    );
+    m_effective_values_dialog = std::make_unique<EffectiveValuesDialog>(
         m_project_interactor,
         *m_render_module_navigator
     );
@@ -575,8 +584,9 @@ void PlaterRenderModule::init_scene_layout()
         &m_plugin_system
     );
 
-    m_object_list = Passthrough(std::make_unique<ObjectListWindow>(&m_project_interactor, true));
+    m_object_list = Passthrough(std::make_unique<ObjectListWindow>(m_project_interactor, true));
     m_object_list->set_gizmo_controller(m_gizmo_manager.get());
+    m_object_list->add_context_menu_listener(this);
     m_object_list->on_config_container_added = [this]()
     {
         m_render_module_navigator->set_opened_dialog(
@@ -618,9 +628,9 @@ void PlaterRenderModule::init_scene_layout()
         m_sidebar_object.release(),
         m_sidebar_action_buttons.release(),
         m_history.release(),
-        m_number_entry_dialog.release(),
         m_welcome_dialog.release(),
         m_invalid_data_dialog.release(),
+        m_effective_values_dialog.release(),
         m_plugin_system.init_dialog().release(),
         m_crashed_projects_dialog.release(),
         m_preset_updater_dialog.release()
@@ -705,6 +715,18 @@ void PlaterRenderModule::init_scene_layout()
         tool_name(Scene::ToolType::PaintOnSupportsGizmo)
     );
 
+    m_toolbar_sla_support_points = m_layout->add_toolbar_item(
+        ToolbarID::ToolRight,
+        tool_icon(Scene::ToolType::SlaSupportPointsGizmo),
+        tool_name(Scene::ToolType::SlaSupportPointsGizmo)
+    );
+
+    m_toolbar_sla_hollow = m_layout->add_toolbar_item(
+        ToolbarID::ToolRight,
+        tool_icon(Scene::ToolType::SlaHollowGizmo),
+        tool_name(Scene::ToolType::SlaHollowGizmo)
+    );
+
     m_toolbar_paint_on_seams = m_layout->add_toolbar_item(
         ToolbarID::ToolRight,
         tool_icon(Scene::ToolType::PaintOnSeamsGizmo),
@@ -763,7 +785,7 @@ void PlaterRenderModule::init_scene_layout()
         ToolbarID::Mode,
         Render::Icon::ObjectIcon,
         _u8L("Prepare"),
-        _u8L("Prepare Mode"),
+        _u8L("Prepare mode"),
         ToolBarSwitchButton::SwitchPosition::Left
     );
     plater_button->set_checked(true);
@@ -772,7 +794,7 @@ void PlaterRenderModule::init_scene_layout()
         ToolbarID::Mode,
         Render::Icon::Preview,
         _u8L("Preview"),
-        _u8L("Preview Mode"),
+        _u8L("Preview mode"),
         ToolBarSwitchButton::SwitchPosition::Right
     );
 
@@ -787,14 +809,8 @@ void PlaterRenderModule::init_dialog_navigation()
         &m_sidebar_bed->printer_add_dialog(),
         &m_sidebar_bed->logical_printer_settings_dialog()
     );
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_bed->logical_printer_settings_dialog().printer_advanced_settings_dialog(),
-        &m_sidebar_bed->logical_printer_settings_dialog()
-    );
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_bed->logical_printer_settings_dialog().color_mix_dialog(),
-        &m_sidebar_bed->logical_printer_settings_dialog()
-    );
+    m_dialog_navigation.insert_dialog(&m_sidebar_bed->printer_advanced_settings_dialog());
+    m_dialog_navigation.insert_dialog(&m_sidebar_bed->color_mix_dialog());
 
     m_dialog_navigation.insert_dialog(&m_sidebar_bed->material_selection_dialog());
     m_dialog_navigation.insert_dialog(
@@ -803,15 +819,11 @@ void PlaterRenderModule::init_dialog_navigation()
     );
 
     m_dialog_navigation.insert_dialog(&m_sidebar_print->print_settings_dialog());
+    m_dialog_navigation.insert_dialog(m_sidebar_print->tool_to_feature_dialog());
+    m_dialog_navigation.insert_dialog(&m_sidebar_print->print_mode_dialog());
     m_dialog_navigation.insert_dialog(m_preferences_dialog.get());
-    m_dialog_navigation.insert_dialog(m_number_entry_dialog.get());
     m_dialog_navigation.insert_dialog(m_invalid_data_dialog.get());
-
-    m_dialog_navigation.insert_dialog(&m_sidebar_action_buttons->physical_printer_settings_dialog());
-    m_dialog_navigation.insert_dialog(
-        &m_sidebar_action_buttons->physical_printer_advanced_settings_dialog(),
-        &m_sidebar_action_buttons->physical_printer_settings_dialog()
-    );
+    m_dialog_navigation.insert_dialog(m_effective_values_dialog.get());
 
     // Init gizmos dialogs
     auto init_gizmo_dialog = [this](Scene::ToolType tool_type, GizmoWindowPtr dialog)
@@ -837,6 +849,11 @@ void PlaterRenderModule::init_dialog_navigation()
         Scene::ToolType::PaintOnSupportsGizmo,
         m_paint_on_supports_gizmo->release_ui_window()
     );
+    init_gizmo_dialog(
+        Scene::ToolType::SlaSupportPointsGizmo,
+        m_sla_support_points_gizmo->release_ui_window()
+    );
+    init_gizmo_dialog(Scene::ToolType::SlaHollowGizmo, m_sla_hollow_gizmo->release_ui_window());
     init_gizmo_dialog(
         Scene::ToolType::PaintOnSeamsGizmo,
         m_paint_on_seams_gizmo->release_ui_window()
@@ -1015,6 +1032,16 @@ void PlaterRenderModule::init_gizmos()
         m_project_interactor,
         *m_scene_presenter
     );
+    m_sla_support_points_gizmo = &m_gizmo_manager->add_tool_gizmo<SlaSupportPointsGizmo>(
+        *m_device,
+        m_project_interactor,
+        *m_scene_presenter
+    );
+    m_sla_hollow_gizmo = &m_gizmo_manager->add_tool_gizmo<SlaHollowGizmo>(
+        *m_device,
+        m_project_interactor,
+        *m_scene_presenter
+    );
     m_paint_on_seams_gizmo = &m_gizmo_manager->add_tool_gizmo<PaintOnSeamsGizmo>(
         *m_device,
         m_gizmo_manager->data_factory(),
@@ -1094,6 +1121,10 @@ ToolBarButton* PlaterRenderModule::get_toolbar_button(Scene::ToolType tool_type)
         return m_toolbar_arrange;
     case Scene::ToolType::PaintOnSupportsGizmo:
         return m_toolbar_paint_on_supports;
+    case Scene::ToolType::SlaSupportPointsGizmo:
+        return m_toolbar_sla_support_points;
+    case Scene::ToolType::SlaHollowGizmo:
+        return m_toolbar_sla_hollow;
     case Scene::ToolType::PaintOnSeamsGizmo:
         return m_toolbar_paint_on_seams;
     case Scene::ToolType::PaintOnFuzzySkinGizmo:
@@ -1145,6 +1176,11 @@ void PlaterRenderModule::on_status_cache_status_code_changed(const Domain::Slici
 
 void PlaterRenderModule::on_show_context_menu(ContextMenuType type, Domain::Vec2f mouse_position)
 {
+    if (type == ContextMenuType::None) {
+        close_all_menus();
+        return;
+    }
+
     Domain::Vec2f pos = mouse_position - m_top_bar->get_global_pos();
 
     Yoga::Menu* menu{nullptr};
@@ -1307,6 +1343,13 @@ void PlaterRenderModule::on_scene_mouse_event(const Platform::MouseEvent& e)
         && e.type() == Platform::MouseEvent::Type::ButtonUp)
     {
         close_all_menus();
+    }
+}
+
+void PlaterRenderModule::on_frame_begin()
+{
+    if (m_scene_presenter->project_ready()) {
+        this->apply_mouse_3d_input(m_scene_presenter->scene());
     }
 }
 

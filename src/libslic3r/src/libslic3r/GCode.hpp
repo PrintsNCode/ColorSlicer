@@ -372,7 +372,14 @@ private:
         bool reset_e    = true
     );
     std::string     unretract() { return m_writer.unretract(); }
-    std::string set_extruder(unsigned int extruder_id, double print_z, const Domain::ConfigView& config);
+
+    std::string set_extruder(
+        unsigned int extruder_id,
+        double print_z,
+        const Domain::ConfigView& config,
+        const std::optional<Vec2d>& toolchange_return_position = std::nullopt
+    );
+
     bool line_distancer_is_required(
         const std::vector<unsigned int>& extruder_ids,
         const std::vector<InstanceToPrint>& instances_to_print
@@ -393,7 +400,7 @@ private:
     struct PlaceholderParserIntegration {
         void reset();
         void init(const GCodeWriter &config);
-        void update_from_gcodewriter(const GCodeWriter &writer, const std::optional<WipeTowerData>& wipe_tower_data);
+        void update_from_gcodewriter(const GCodeWriter &writer, const std::optional<WipeTowerData>& wipe_tower_data, double used_filament_compensation);
         void validate_output_vector_variables();
 
         Biz::Parser::PlaceholderParser parser;

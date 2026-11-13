@@ -303,11 +303,16 @@ void add_misc_options(CLI::App& app, App::InitParams& params)
     app.add_option(
            "--loglevel",
            params.misc.loglevel,
-           "Sets logging sensitivity. 0:fatal, 1:error, 2:warning, 3:info, 4:debug, 5:trace "
-           "For example. loglevel=2 logs fatal, error and warning level messages."
+           "Sets logging sensitivity. 0:critical, 1:error, 2:warning, 3:info, 4:debug, "
+           "5:trace. For example, --loglevel=2 logs critical, error and warning messages."
     )
         ->type_name("N")
-        ->check(CLI::Range(0, 5));
+        ->check(
+            CLI::Range(
+                static_cast<int>(Slic3r::LogLevel::Critical),
+                static_cast<int>(Slic3r::LogLevel::Trace)
+            )
+        );
 
     app.add_flag(
         "--opengl-aa",
@@ -769,7 +774,8 @@ void add_sla_config_boxes_overrides(CLI::App& app, App::InitParams& params)
     const ConstConfigBoxRefs config_boxes = {
         sla_config_pack.sla_print_settings,
         sla_config_pack.sla_printer_settings,
-        sla_config_pack.sla_material_settings
+        sla_config_pack.sla_material_settings,
+        sla_config_pack.sla_project_settings
     };
 
     add_config_boxes_overrides(app, params, config_boxes);
@@ -797,6 +803,8 @@ void add_plugin_subcommand(CLI::App& app, App::InitParams& params)
 {
     using namespace Slic3r::App;
     auto* plugin_app = app.add_subcommand("plugin", "Plugin tools");
+    // reset app options, which are otherwise inherited from parent app
+    plugin_app->option_defaults()->group("OPTIONS");
 
     // Command: plugin init
     {

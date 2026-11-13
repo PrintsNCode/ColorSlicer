@@ -1,6 +1,6 @@
 # ColorSlicer
 
-A fork of [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) 3.0.0-alpha12 that keeps **colors** and
+A fork of [PrusaSlicer](https://github.com/prusa3d/PrusaSlicer) 3.0.0-alpha14 that keeps **colors** and
 **print settings** when you open a 3MF written by another application, and **colors** from OBJ files.
 
 ## Download

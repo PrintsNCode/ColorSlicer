@@ -3,10 +3,12 @@
 #include "Slic3r/App/Render/ScopedDebugGroup.hpp"
 #include "Slic3r/App/Scene/BedNodeTag.hpp"
 #include "Slic3r/App/Scene/SceneNodeTag.hpp"
+#include "Slic3r/Biz/Preset/PresetInteractor.hpp"
 #include "Slic3r/Domain/TemplateUtils.hpp"
 // DEBUG ONLY: for MEASURE_GIZMO_DEBUG
 #include "Slic3r/App/Plater/MeasureGizmo.hpp"
 
+#include <magic_enum/magic_enum.hpp>
 #include <tracy/Tracy.hpp>
 
 #if DEBUG_GIZMO_MANAGER
@@ -37,6 +39,7 @@ GizmoManager::GizmoManager(
     m_project_changed_listener_scope(project_interactor, *this),
     m_selected_project_changed_listener_scope(project_interactor, *this),
     m_scene_selection_changed_listener_scope(project_interactor.scene_interactor(), *this),
+    m_preset_changed_listener_scope(project_interactor.preset_interactor(), *this),
     m_projects(project_interactor),
     m_scene_provider(scene_provider),
     m_project_interactor(project_interactor),
@@ -46,6 +49,8 @@ GizmoManager::GizmoManager(
 {
     GizmoManager::on_selected_project_changed(m_project_interactor.selected_project_id());
 }
+
+GizmoManager::~GizmoManager() = default;
 
 namespace {
 std::vector<IGizmo*> get_active_gizmos(
@@ -139,7 +144,7 @@ void GizmoManager::on_scene_mouse_event(const Platform::MouseEvent& e, const Sli
     auto [pick_results, pick_ray] = pick(e, screen_info);
 
 #if DEBUG_GIZMO_MANAGER
-    update_gizmo_activation_debug_frame_begin();
+    update_gizmo_activation_debug_frame_begin(e);
 #endif
 
     GizmoEventContext ctx{m_scene_provider, e, pick_ray, pick_results, screen_info};
@@ -192,7 +197,7 @@ void GizmoManager::on_scene_mouse_event(const Platform::MouseEvent& e, const Sli
 
             auto ret = g->on_mouse(ctx, single_active);
 #if DEBUG_GIZMO_MANAGER
-        update_gizmo_activation_debug_data(g, ret);
+            update_gizmo_activation_debug_data(g, ret);
 #endif
 
             if (ret == GizmoActivationState::Inactive) {
@@ -254,6 +259,34 @@ void GizmoManager::on_scene_selection_changed(
     Domain::SelectionId project_id,
     const Biz::Scene::ObjectSelection& selection
 ) {
+    deactivate_current_tool_if_disabled();
+}
+
+void GizmoManager::on_config_container_selection_changed(
+    Domain::SelectionId project_id,
+    Domain::SelectionId config_container_id
+)
+{
+    if (project_id == m_project_interactor.selected_project_id()) {
+        deactivate_current_tool_if_disabled();
+    }
+}
+
+void GizmoManager::on_preset_selection_changed(
+    Domain::SelectionId project_id,
+    Domain::SelectionId config_container_id,
+    Biz::Preset::PresetItemType type
+)
+{
+    if (type == Biz::Preset::PresetItemType::PrinterPreset
+        && project_id == m_project_interactor.selected_project_id())
+    {
+        deactivate_current_tool_if_disabled();
+    }
+}
+
+void GizmoManager::deactivate_current_tool_if_disabled()
+{
     for (const IToolGizmoPtr& tool_gizmo : m_tool_gizmos) {
         if (current_tool_type() == tool_gizmo->type()
             && !tool_gizmo->enabled())
@@ -380,6 +413,8 @@ static ToolType tool_state_to_tool_type(const Undo::ToolState& tool_state)
         Domain::overloaded{
             [](const Undo::HeightRangeGizmoState& state) { return ToolType::HeightRangeGizmo; },
             [](const Undo::CutGizmoState&) { return ToolType::CutGizmo; },
+            [](const Undo::SlaSupportPointsGizmoState&) { return ToolType::SlaSupportPointsGizmo; },
+            [](const Undo::SlaHollowGizmoState&) { return ToolType::SlaHollowGizmo; },
         },
         tool_state
     );
@@ -443,12 +478,16 @@ void GizmoManager::update_gizmo_activation_debug_data(const IGizmo* g, GizmoActi
     }
 }
 
-void GizmoManager::update_gizmo_activation_debug_frame_begin()
+void GizmoManager::update_gizmo_activation_debug_frame_begin(Platform::MouseEvent event)
 {
     for (auto& [g, gad] : m_activation_debug) {
         gad.push_back(GizmoActivationState::Inactive);
         if (gad.size() > NUM_DEBUG_ACTIVATION_LAST_STEPS)
             gad.pop_front();
+    }
+    m_events_debug.emplace_back(std::move(event));
+    if (m_events_debug.size() > NUM_DEBUG_ACTIVATION_LAST_STEPS) {
+        m_events_debug.pop_front();
     }
 }
 
@@ -457,16 +496,48 @@ void GizmoManager::render_gizmo_activation_debug()
     if (!m_activation_debug_shown)
         return;
 
-    ImGui::SetNextWindowSize(ImVec2(0,240), ImGuiCond_FirstUseEver);
-    ImGui::SetNextWindowPos(ImVec2(0, ImGui::GetIO().DisplaySize.y), ImGuiCond_Appearing, ImVec2(0, 1));
+    const auto& io = ImGui::GetIO();
+    ImGui::SetNextWindowSize(ImVec2(io.DisplaySize.x, 240), ImGuiCond_FirstUseEver);
+    ImGui::SetNextWindowPos(ImVec2(0, io.DisplaySize.y), ImGuiCond_Appearing, ImVec2(0, 1));
 
     if (ImGui::Begin("Gizmo Activation", &m_activation_debug_shown, ImGuiWindowFlags_NoSavedSettings)) {
         // Begin a table with 2 + maxCellsPerRow columns
         if (ImGui::BeginTable("MapDataTable", 1 + NUM_DEBUG_ACTIVATION_LAST_STEPS, ImGuiTableFlags_Borders | ImGuiTableFlags_RowBg)) {
             // Set fixed width for the first column
-            ImGui::TableSetupColumn("Gizmo", ImGuiTableColumnFlags_WidthFixed, 250.0f); // Adjust 150.0f as needed
+            ImGui::TableSetupColumn("Gizmo", ImGuiTableColumnFlags_WidthFixed, 230.0f); // Adjust 150.0f as needed
+            size_t n = m_events_debug.size();
+            int header_start_idx = NUM_DEBUG_ACTIVATION_LAST_STEPS - n;
+            auto header_it = m_events_debug.begin();
             for (int i = 0; i < NUM_DEBUG_ACTIVATION_LAST_STEPS; ++i) {
-                ImGui::TableSetupColumn("");
+                std::string label;
+                if (i >= header_start_idx) {
+                    auto e = *header_it;
+                    ++header_it;
+                    switch (e.type()) {
+                    case Platform::MouseEvent::Type::Move:
+                        label += "M";
+                        break;
+                    case Platform::MouseEvent::Type::ButtonDown:
+                        label += "D";
+                        break;
+                    case Platform::MouseEvent::Type::ButtonUp:
+                        label += "U";
+                        break;
+                    case Platform::MouseEvent::Type::DoubleClick:
+                        label += "2";
+                        break;
+                    case Platform::MouseEvent::Type::Wheel:
+                        label += "W";
+                        break;
+                    case Platform::MouseEvent::Type::Enter:
+                        label += "E";
+                        break;
+                    case Platform::MouseEvent::Type::Leave:
+                        label += "L";
+                        break;
+                    }
+                }
+                ImGui::TableSetupColumn(label.c_str(), ImGuiTableColumnFlags_WidthStretch);
             }
             ImGui::TableHeadersRow();
 

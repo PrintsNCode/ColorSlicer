@@ -10,6 +10,7 @@
 #include <boost/uuid/uuid_io.hpp>
 #include <boost/uuid/random_generator.hpp>
 #include <boost/system/error_code.hpp>
+#include <boost/algorithm/string/predicate.hpp>
 
 namespace Slic3r::Biz::ResultExport {
 
@@ -90,25 +91,23 @@ void write_lineview_to_path(const libpgcode::LineView& input, const boost::files
     }
 }
 
-void process_line_view(const libpgcode::LineView& input, const boost::filesystem::path& result_path, PrintHost::PrintHostExportFormat result_format)
+void process_line_view(const libpgcode::LineView& input, const boost::filesystem::path& result_path, bool binary)
 {
-    switch (result_format)
-    {
-    case Slic3r::Biz::PrintHost::PrintHostExportFormat::GCode:
-        write_lineview_to_path(input, result_path);
-        break;
-    case Slic3r::Biz::PrintHost::PrintHostExportFormat::BGCode:
+    if (binary) {
         from_ascii_to_binary_wrapper(input, result_path);
-        break;
-    case Slic3r::Biz::PrintHost::PrintHostExportFormat::Undefined:
-    default:
-        throw std::runtime_error(std::string("PrintHostFinalizer: Unexpected result format {}. Expected G-Code.", (int)result_format));
+    } else {
+        write_lineview_to_path(input, result_path);
     }
 }
 
-void process_sla_result(const Slicing::SLAResultData& data, const boost::filesystem::path& result_path, PrintHost::PrintHostExportFormat result_format)
+void process_sla_result(
+    const Slicing::SLAResultData& data,
+    const boost::filesystem::path& result_path,
+    const std::string& job_name
+)
 {
-    PrintHost::Sla::store_sl1(result_path.string(), data);
+    // result_path is a temporary file; the job is named after the file the user will see.
+    PrintHost::Sla::store_sl1(result_path.string(), job_name, data);
 }
 
 boost::filesystem::path get_temporary_file_path(const std::string& extension)
@@ -132,9 +131,13 @@ void ResultExportDataFinalizer::finalize(PhysicalPrinter::PhysicalPrinterConfig&
             {
                 using T = std::decay_t<decltype(arg)>;
                 if constexpr (std::is_same_v<T, std::shared_ptr<const libpgcode::LineView>>) {
-                    process_line_view(*arg, data.source_path, data.result_format);
+                    process_line_view(*arg, data.source_path, boost::iequals(data.dest_path.extension().string(), ".bgcode"));
                 } else if constexpr (std::is_same_v<T, std::shared_ptr<const Slicing::SLAResultData>>) {
-                    process_sla_result(*arg, data.source_path, data.result_format);
+                    process_sla_result(
+                        *arg,
+                        data.source_path,
+                        data.job_name.empty() ? data.dest_path.stem().string() : data.job_name
+                    );
                 } else {
                     ASSERT(false, "non-exhaustive visitor!");
                 }

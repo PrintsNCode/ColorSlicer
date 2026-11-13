@@ -1,34 +1,77 @@
 #include "Slic3r/App/Init.hpp"
 
 #include "Slic3r/Biz/Platform/BlacklistedLibraryCheck.hpp"
+#include "Slic3r/Biz/PresetUpdater/PresetUpdaterStaging.hpp"
+#include "Slic3r/Biz/Utils/CopyFile.hpp"
 #include "Slic3r/Directories.hpp"
 #include "Slic3r/Platform.hpp"
 #include "Slic3r/Log.hpp"
+
+#include <charconv>
+#include <string_view>
 
 #include <boost/dll/runtime_symbol_info.hpp>
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/nowide/cstdlib.hpp>
 #include <boost/nowide/filesystem.hpp>
+#include <boost/nowide/fstream.hpp>
 #include <boost/nowide/convert.hpp>
 
 namespace Slic3r::App {
 
+const constexpr std::size_t log_file_max_size = 1 * 1024 * 1024;
+
+constexpr bool is_debug_build =
+#ifdef NDEBUG
+    false;
+#else
+    true;
+#endif
+
 InitParams::InitParams(const int argc, char** argv) : argc(argc), argv(argv) {}
+
+static LogLevel default_log_level()
+{
+    return is_debug_build ? LogLevel::Trace : LogLevel::Info;
+}
+
+std::optional<LogLevel> log_level_from_env()
+{
+    const char* log_level_text = boost::nowide::getenv("SLIC3R_LOGLEVEL");
+    if (log_level_text == nullptr) {
+        return std::nullopt;
+    }
+
+    const std::string_view text{log_level_text};
+    unsigned log_level = 0;
+    const std::from_chars_result result =
+        std::from_chars(text.data(), text.data() + text.size(), log_level);
+    if (result.ec != std::errc{}
+        || result.ptr != text.data() + text.size()
+        || log_level > static_cast<unsigned>(LogLevel::Trace))
+    {
+        SPDLOG_ERROR("Invalid SLIC3R_LOGLEVEL environment variable: {}", text);
+        return std::nullopt;
+    }
+
+    return static_cast<LogLevel>(log_level);
+}
 
 void init_common()
 {
-    {
-        Slic3r::set_log_level(1);
-        const char* loglevel = boost::nowide::getenv("SLIC3R_LOGLEVEL");
-        if (loglevel != nullptr) {
-            if (loglevel[0] >= '0' && loglevel[0] <= '9' && loglevel[1] == 0) {
-                Slic3r::set_log_level(loglevel[0] - '0');
-            } else {
-                SPDLOG_ERROR("Invalid SLIC3R_LOGLEVEL environment variable: {}", loglevel);
-            }
-        }
-    }
+#ifdef _WIN32
+    // nowide_filesystem calls std::locale("") which may throw on Linux
+    // with unsupported locale, we should call this just on Windows.
+    boost::nowide::nowide_filesystem();
+#endif
+
+    const boost::filesystem::path log_path =
+        boost::filesystem::path{Slic3r::get_default_datadir()} / "shared_runtime" / "log.txt";
+    Slic3r::set_file_log_config(FileLogConfig{log_path.string(), log_file_max_size});
+    Slic3r::init_logging();
+
+    Slic3r::set_log_level(log_level_from_env().value_or(default_log_level()));
 
     // Detect the operating system flavor after SLIC3R_LOGLEVEL is set.
     Slic3r::detect_platform();
@@ -55,12 +98,6 @@ void init_common()
 #ifdef __EMSCRIPTEN__
     boost::filesystem::path path_resources = "/resources";
 #else
-#ifdef _WIN32
-    // nowide_filesystem calls std::locale("") which may throw on Linux
-    // with unsupported locale, we should call this just on Windows
-    boost::nowide::nowide_filesystem();
-#endif
-
     // See Invoking prusa-slicer from $PATH environment variable crashes #5542
     // boost::filesystem::path path_to_binary = boost::filesystem::system_complete(argv[0]);
     boost::filesystem::path path_to_binary = boost::dll::program_location();
@@ -97,6 +134,64 @@ void init_common()
     Slic3r::set_sys_shapes_dir((path_resources / "shapes").string());
     Slic3r::set_custom_gcodes_dir((path_resources / "custom_gcodes").string());
 }
+
+namespace {
+
+bool can_rename_into_data_dir(const boost::filesystem::path& candidate)
+{
+    boost::system::error_code ec;
+    const bool created = boost::filesystem::create_directories(candidate, ec);
+    if (ec) {
+        return false;
+    }
+
+    const boost::filesystem::path probe_name =
+        boost::filesystem::unique_path(".volume_probe-%%%%-%%%%-%%%%-%%%%");
+    const boost::filesystem::path source = candidate / probe_name;
+    const boost::filesystem::path target = boost::filesystem::path(Slic3r::data_dir()) / probe_name;
+
+    bool probe_written = false;
+    {
+        boost::nowide::ofstream probe(source.string().c_str());
+        probe_written = static_cast<bool>(probe);
+    }
+
+    const bool renamed =
+        probe_written && !Biz::Utils::rename_file(source.string(), target.string());
+    boost::filesystem::remove(source, ec);
+    boost::filesystem::remove(target, ec);
+    if (!renamed && created) {
+        boost::filesystem::remove(candidate, ec);
+    }
+    return renamed;
+}
+
+/**
+ * @brief Picks the staging root, preferring the platform cache but insisting on a rename.
+ *
+ * Installing finishes by renaming staged files over the installed ones, which only works within
+ * one volume. A data directory on another drive would otherwise silently turn every install into
+ * a copy that can run out of space after the download already succeeded.
+ */
+std::string resolve_updater_cache_dir(bool datadir_overridden)
+{
+    const std::string candidate = Slic3r::get_default_updater_cache_dir(datadir_overridden);
+    if (datadir_overridden) {
+        // Already inside the data directory, so it shares its volume by construction.
+        return candidate;
+    }
+    if (can_rename_into_data_dir(candidate)) {
+        return candidate;
+    }
+    SPDLOG_INFO(
+        "{} is not on the same volume as the data directory. Staging preset downloads inside the"
+        " data directory instead.",
+        candidate
+    );
+    return Slic3r::get_default_updater_cache_dir(true);
+}
+
+} // namespace
 
 void init_paths(const InitParams& init_params)
 {
@@ -136,6 +231,19 @@ void init_paths(const InitParams& init_params)
             boost::filesystem::create_directory(sub);
         }
     }
+
+    // After the data dir exists: the probe renames into it.
+    Slic3r::set_updater_cache_dir(
+        resolve_updater_cache_dir(init_params.misc.datadir.has_value())
+    );
+
+    const boost::filesystem::path staging = Slic3r::updater_staging_dir();
+    boost::system::error_code ec;
+    boost::filesystem::create_directories(staging, ec);
+    if (ec) {
+        SPDLOG_ERROR("Failed to create directory {}: {}", staging.string(), ec.message());
+    }
+    Biz::PresetUpdater::sweep_stale_staging();
 }
 
 } // namespace Slic3r::App

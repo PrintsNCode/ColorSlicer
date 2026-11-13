@@ -70,7 +70,7 @@ static std::string to_string(Biz::UndoSnapshotType type)
     case Type::QuickDrag:
         return _u8L("Quick drag");
     case Type::QuickDragAndAddBed:
-        return _u8L("Quick drag and add a bed");
+        return _u8L("Drag to add a bed");
     case Type::Translate:
         return _u8L("Translate");
     case Type::SetTranslation:
@@ -210,11 +210,11 @@ static std::string to_string(Biz::UndoSnapshotType type)
     case Type::SelectBed:
         return _u8L("Select a bed");
     case Type::AddConfigContainer:
-        return _u8L("Add Printer Group");
+        return _u8L("Add printer group");
     case Type::DuplicateConfigContainer:
-        return _u8L("Duplicate Printer Group");
+        return _u8L("Duplicate printer group");
     case Type::DeleteConfigContainer:
-        return _u8L("Delete Printer Group");
+        return _u8L("Delete printer group");
     case Type::AddBed:
         return _u8L("Add a bed");
     case Type::DeleteBed:
@@ -232,7 +232,7 @@ static std::string to_string(Biz::UndoSnapshotType type)
     case Type::MergeToOneObject:
         return _u8L("Merge to object");
     case Type::InvalidateCutInfo:
-        return _u8L("Invalidate Cut Info");
+        return _u8L("Invalidate cut info");
     case Type::SetAsPrintable:
         return _u8L("Change printable state");
     case Type::ChangeVolumeType:
@@ -263,6 +263,32 @@ static std::string to_string(Biz::UndoSnapshotType type)
         return _u8L("Paste height range settings");
     case Type::HeightRangeLayerHeightOverride:
         return _u8L("Add layer height override");
+    case Type::SlaSupportPointsAdd:
+        return _u8L("Add support point");
+    case Type::SlaSupportPointsDelete:
+        return _u8L("Delete support points");
+    case Type::SlaSupportPointsMove:
+        return _u8L("Move support point");
+    case Type::SlaSupportPointsHeadDiameter:
+        return _u8L("Change point head diameter");
+    case Type::SlaSupportPointsRemoveAll:
+        return _u8L("Remove all support points");
+    case Type::SlaSupportPointsApply:
+        return _u8L("Support points edit");
+    case Type::SlaSupportPointsAutoGenerate:
+        return _u8L("Autogenerate support points");
+    case Type::SlaDrainHolesAdd:
+        return _u8L("Add drainage hole");
+    case Type::SlaDrainHolesDelete:
+        return _u8L("Delete drainage holes");
+    case Type::SlaDrainHolesMove:
+        return _u8L("Move drainage hole");
+    case Type::SlaDrainHolesSize:
+        return _u8L("Change drainage hole size");
+    case Type::SlaDrainHolesRemoveAll:
+        return _u8L("Remove all drainage holes");
+    case Type::SlaDrainHolesApply:
+        return _u8L("Drainage holes edit");
     case Type::ExecutePlugin:
         return _u8L("Execute plugin");
     case Type::ReplaceWithStl:
@@ -271,6 +297,8 @@ static std::string to_string(Biz::UndoSnapshotType type)
         return _u8L("Reload from disk");
     case Type::EditVirtualExtruders:
         return _u8L("Edit virtual extruders");
+    case Type::ReorderVolumes:
+        return _u8L("Reorder volumes");
     case Type::RepairObjectMesh:
         return _u8L("Repair mesh");
     }
@@ -375,6 +403,11 @@ void Store::take_snapshot(Biz::UndoSnapshotType snapshot_type)
         // Only invalidate non-empty projects
         m_project_interactor.backup_store().invalidate_backup(project_id);
     }
+}
+
+bool Store::is_restoring_snapshot() const
+{
+    return !m_snapshotting_enabled;
 }
 
 bool Store::is_undo_possible() const

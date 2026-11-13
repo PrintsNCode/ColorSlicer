@@ -70,6 +70,7 @@ enum class MenuItemName
 
     Import,
     ImportGeometry,
+    ImportZip,
 
     Export,
     ExportGcode,
@@ -99,6 +100,7 @@ enum class MenuItemName
     CopyObject,
     PasteObject,
     DeleteSelectedObject,
+    RenameObject,
     SetNumberOfInstances,
     FillBedWithInstances,
     ExportObject,
@@ -166,6 +168,7 @@ enum class MenuItemName
     CopyVolume,
     PasteVolume,
     DeleteSelectedVolume,
+    RenameVolume,
     ExportVolume,
     ReplaceVolume,
     ReloadVolume,
@@ -176,6 +179,7 @@ enum class MenuItemName
     PluginRescan,
     PluginFolder,
     PluginInstall,
+    PluginMarketplace,
 };
 
 class UniversalMenuItemName: public std::variant<MenuItemName, std::string>

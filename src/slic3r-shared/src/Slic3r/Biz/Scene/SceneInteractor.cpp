@@ -1,5 +1,7 @@
 #include "Slic3r/Biz/Scene/SceneInteractor.hpp"
 
+#include "Slic3r/Biz/ObjectList/ObjectListInteractor.hpp"
+
 #include "Slic3r/Assert.hpp"
 #include "Slic3r/Exception.hpp"
 #include "Slic3r/Biz/Arrange/Arrange.hpp"
@@ -23,6 +25,7 @@
 #include "Slic3r/Biz/Algorithms/Point.hpp"
 #include "Slic3r/Biz/Algorithms/Polygon.hpp"
 #include "Slic3r/Biz/Algorithms/PolygonUtils.hpp"
+#include "Slic3r/Biz/Algorithms/SlaPoints.hpp"
 #include "Slic3r/Biz/Arrange/Arrange.hpp"
 #include "Slic3r/Biz/ISelectedBedInstanceChangedListener.hpp"
 #include "Slic3r/Biz/Scene/BedFactory.hpp"
@@ -289,7 +292,12 @@ void transform_selection_volume_mode(const SceneInteractorProjectContext& proj, 
 
 } // namespace
 
-SceneInteractor::SceneInteractor(Domain::Workbench& workbench) : m_workbench(workbench) {}
+SceneInteractor::SceneInteractor(Domain::Workbench& workbench) :
+    m_workbench(workbench),
+    m_object_list_interactor(std::make_unique<ObjectList::ObjectListInteractor>(*this))
+{}
+
+SceneInteractor::~SceneInteractor() = default;
 
 void SceneInteractor::on_selected_project_changed(size_t index)
 {
@@ -357,7 +365,7 @@ void SceneInteractor::set_object_selection(
     normalize_object_selection(selection);
 
     auto& project_context = it->second;
-    ObjectSelection sel{.mode = selection.mode};
+    ObjectSelection sel{.mode = selection.mode, .anchor = selection.anchor};
     for (const auto& e : selection.elements) {
         if (e.has_instance() || e.is_wipe_tower()) {
             sel.elements.push_back(e);
@@ -604,6 +612,11 @@ void SceneInteractor::normalize_object_selection(ObjectSelection& selection) con
             const auto object = it->second.project.find_object_by_id(selection.elements.front().object_id);
             if (object->volumes.size() == selection.elements.size())
                 requires_instance_mode = true;
+            else if (inst_id == 0) {
+                for (auto& e : selection.elements) {
+                    e.instance_id = object->instances.front()->id().id;
+                }
+            }
         }
     }
 
@@ -799,12 +812,14 @@ void SceneInteractor::add_volume_from_mesh(
 
     Algorithms::ModelObject::sort_volumes(&obj);
 
+    const BedTrackingChanges changes = update_elements_bed_placement(updated, true, true);
     invoke_listeners<ISceneChangedListener>(
-        [&](auto* l) { l->on_volume_added(m_selected_project_id, updated); }
+        [&](auto* l) { l->on_volume_added(m_selected_project_id, updated, changes); }
     );
 
     set_object_selection({SelectionMode::Volume, updated});
-    update_elements_bed_placement(sel.elements, sel.mode == SelectionMode::Volume);
+    for (const auto& bed_ref : changes.updated_beds)
+        invoke_slicing_input_changed(bed_ref);
 }
 
 void SceneInteractor::add_volume_into_selected_object(const Domain::ModelVolume& volume)
@@ -839,12 +854,12 @@ void SceneInteractor::add_volume(
         Domain::ElementRef(obj->id().id, instance_id, volume->id().id)
     };
 
+    auto changes = m_bed_tracking.update_instances_bed_placement(p, updated);
     invoke_listeners<ISceneChangedListener>([&](auto* l) {
-        l->on_volume_added(project_id, updated);
+        l->on_volume_added(project_id, updated, changes);
     });
     set_object_selection({ SelectionMode::Volume, updated}, project_id);
 
-    auto changes = m_bed_tracking.update_instances_bed_placement(p, updated);
     for (const auto& bed_ref : changes.updated_beds)
         invoke_slicing_input_changed(bed_ref);
 }
@@ -867,12 +882,14 @@ void SceneInteractor::set_selected_volume_type(Domain::ModelVolumeType volume_ty
     }
     ASSERT(object->parts_count() > 0);
     Algorithms::ModelObject::sort_volumes(object);
+    // The SLA points of a volume which is no longer a part of the SLA geometry are not used.
+    Algorithms::SlaPoints::drop_user_status_without_points(*object);
 
+    const BedTrackingChanges changes = update_elements_bed_placement(volumes, true, true);
     invoke_listeners<ISceneChangedListener>(
-        [&](auto* l) { l->on_volume_type_changed(m_selected_project_id, volumes); }
+        [&](auto* l) { l->on_volume_type_changed(m_selected_project_id, volumes, changes); }
     );
 
-    const BedTrackingChanges changes = update_elements_bed_placement(volumes, true);
     for (const auto& bed_ref : changes.updated_beds)
         invoke_slicing_input_changed(bed_ref);
 }
@@ -1121,9 +1138,12 @@ ElementRefs SceneInteractor::change_volume_meshes(VolumeMeshReplacements&& repla
         volume.reset_extra_facets();
         volume.set_mesh(std::move(replacement.mesh));
 
+        const Domain::Transform3d old_matrix = volume.get_matrix();
         if (replacement.new_transformation.has_value()) {
             volume.set_transformation(replacement.new_transformation.value());
         }
+        // The SLA points and holes stay where they were and move onto the new surface.
+        Algorithms::SlaPoints::reproject_on_new_mesh(volume, old_matrix);
 
         if (replacement.new_source.has_value()) {
             volume.source = replacement.new_source.value();
@@ -1152,11 +1172,12 @@ ElementRefs SceneInteractor::change_volume_meshes(VolumeMeshReplacements&& repla
     for (size_t object_id : object_ids)
         project.find_object_by_id(object_id)->invalidate_bounding_box();
 
+    const auto changes = m_bed_tracking.update_instances_bed_placement(project, updated_ids);
     invoke_listeners<ISceneChangedListener>(
-        [&removed_ids, &updated_ids, project_id = m_selected_project_id](auto* l)
+        [&removed_ids, &updated_ids, &changes, project_id = m_selected_project_id](auto* l)
         {
-            l->on_volume_removed(project_id, removed_ids);
-            l->on_volume_added(project_id, updated_ids);
+            l->on_volume_removed(project_id, removed_ids, changes);
+            l->on_volume_added(project_id, updated_ids, changes);
             l->on_volume_mesh_changed(project_id, updated_ids);
         }
     );
@@ -1169,7 +1190,6 @@ ElementRefs SceneInteractor::change_volume_meshes(VolumeMeshReplacements&& repla
         // selection changes, so the bounding box must be updated manually.
         update_selection_bounding_box();
     }
-    auto changes = m_bed_tracking.update_instances_bed_placement(project, updated_ids);
     for (const auto& bed_ref : changes.updated_beds)
         invoke_slicing_input_changed(bed_ref);
 
@@ -1304,7 +1324,7 @@ void SceneInteractor::modify_facets_annotations(
     }
 }
 
-void SceneInteractor::modify_layer_height_profile(
+void SceneInteractor::modify_object_and_update_beds(
     const Domain::ElementRef& object_ref,
     const std::function<void(ModelObject&)>& modifier
 )
@@ -1327,27 +1347,28 @@ void SceneInteractor::modify_layer_height_profile(
     }
 }
 
+void SceneInteractor::modify_layer_height_profile(
+    const Domain::ElementRef& object_ref,
+    const std::function<void(ModelObject&)>& modifier
+)
+{
+    this->modify_object_and_update_beds(object_ref, modifier);
+}
+
+void SceneInteractor::modify_sla_object_data(
+    const Domain::ElementRef& object_ref,
+    const std::function<void(ModelObject&)>& modifier
+)
+{
+    this->modify_object_and_update_beds(object_ref, modifier);
+}
+
 void SceneInteractor::modify_layer_config_ranges(
     const Domain::ElementRef& object_ref,
     const std::function<void(ModelObject&)>& modifier
 )
 {
-    Project& project          = m_workbench.project(m_selected_project_id);
-    ModelObject* model_object = project.find_object_by_id(object_ref.object_id);
-    ASSERT(model_object != nullptr);
-
-    modifier(*model_object);
-
-    Domain::ElementRefs instance_refs;
-    for (const ModelInstance* model_instance : model_object->instances) {
-        instance_refs.emplace_back(object_ref.object_id, model_instance->id().id);
-    }
-
-    BedTrackingChanges changes =
-        m_bed_tracking.update_instances_bed_placement(project, instance_refs);
-    for (const Domain::BedRef& bed_ref : changes.updated_beds) {
-        this->invoke_slicing_input_changed(bed_ref);
-    }
+    this->modify_object_and_update_beds(object_ref, modifier);
 }
 
 void SceneInteractor::edit_name(const Domain::ElementRef& id, const std::string& new_name)
@@ -1357,6 +1378,76 @@ void SceneInteractor::edit_name(const Domain::ElementRef& id, const std::string&
         project.find_object_by_id(id.object_id)->name = new_name;
     else
         project.find_volume_by_id(id.object_id, id.volume_id)->name = new_name;
+
+    invoke_listeners<ISceneChangedListener>(
+        [&](auto* l) { l->on_element_renamed(m_selected_project_id, id); }
+    );
+}
+
+bool SceneInteractor::can_reorder_volume(
+    const Domain::ElementRef& volume,
+    const Domain::ElementRef& target,
+    VolumeInsertPosition position
+) const
+{
+    if (volume.object_id != target.object_id || volume.volume_id == target.volume_id) {
+        return false;
+    }
+
+    const Domain::Project& project   = m_workbench.project(m_selected_project_id);
+    const Domain::ModelObject* object = project.find_object_by_id(volume.object_id);
+    const Domain::ModelVolume* moved_volume =
+        project.find_volume_by_id(volume.object_id, volume.volume_id);
+    const Domain::ModelVolume* target_volume =
+        project.find_volume_by_id(target.object_id, target.volume_id);
+    if (!object || !moved_volume || !target_volume
+        || moved_volume->type() != target_volume->type())
+    {
+        return false;
+    }
+
+    // Dropping right before the following volume or right after the preceding one
+    // would keep the order unchanged.
+    const auto moved_it  = std::ranges::find(object->volumes, moved_volume);
+    const auto target_it = std::ranges::find(object->volumes, target_volume);
+    return position == VolumeInsertPosition::Before ? target_it != moved_it + 1 :
+                                                      target_it + 1 != moved_it;
+}
+
+void SceneInteractor::reorder_volume(
+    const Domain::ElementRef& volume,
+    const Domain::ElementRef& target,
+    VolumeInsertPosition position
+)
+{
+    if (!can_reorder_volume(volume, target, position)) {
+        return;
+    }
+
+    Domain::Project& project         = m_workbench.project(m_selected_project_id);
+    Domain::ModelObject* object      = project.find_object_by_id(volume.object_id);
+    Domain::ModelVolumePtrs& volumes = object->volumes;
+
+    Domain::ModelVolume* moved_volume =
+        project.find_volume_by_id(volume.object_id, volume.volume_id);
+    volumes.erase(std::ranges::find(volumes, moved_volume));
+
+    auto target_it =
+        std::ranges::find(volumes, project.find_volume_by_id(target.object_id, target.volume_id));
+    ASSERT(target_it != volumes.end());
+    if (position == VolumeInsertPosition::After) {
+        ++target_it;
+    }
+    volumes.insert(target_it, moved_volume);
+    ASSERT(Algorithms::ModelObject::are_volumes_sorted(object));
+
+    const Domain::ElementRefs reordered = {volume};
+    invoke_listeners<ISceneChangedListener>(
+        [&](auto* l) { l->on_volume_reordered(m_selected_project_id, reordered); }
+    );
+
+    // Volume order affects slicing (e.g. modifiers are applied in order).
+    update_elements_bed_placement(reordered, true);
 }
 
 void SceneInteractor::set_printable(const Domain::ElementRef& id, bool is_printable)
@@ -1687,9 +1778,6 @@ void SceneInteractor::split_selection_to_volumes()
 
     // Remove a node associated with this volume, because it's id will be changed after spliting
     Domain::ElementRefs removed = {Domain::ElementRef(object->id().id, 0, sel_volume_id)};
-    invoke_listeners<ISceneChangedListener>(
-        [&](auto* l) { l->on_volume_removed(m_selected_project_id, removed); }
-    );
     auto changes = m_bed_tracking.update_instances_bed_placement(project, removed);
 
     Domain::ElementRefs added;
@@ -1699,11 +1787,16 @@ void SceneInteractor::split_selection_to_volumes()
         );
         created_volumes_cnt--;
     }
-
-    invoke_listeners<ISceneChangedListener>([&](auto* l)
-                                            { l->on_volume_added(m_selected_project_id, added); });
-
     changes.append(m_bed_tracking.update_instances_bed_placement(project, added));
+
+    invoke_listeners<ISceneChangedListener>(
+        [&](auto* l)
+        {
+            l->on_volume_removed(m_selected_project_id, removed, changes);
+            l->on_volume_added(m_selected_project_id, added, changes);
+        }
+    );
+
     for (const auto& bed_ref : changes.updated_beds)
         invoke_slicing_input_changed(bed_ref);
 
@@ -1935,6 +2028,8 @@ std::optional<std::string> SceneInteractor::delete_selected_elements()
                 }
             }
         }
+        // The SLA points of the deleted volumes are gone.
+        Algorithms::SlaPoints::drop_user_status_without_points(*object);
 
 //        normalize_single_volume_object(*object);
 
@@ -1971,7 +2066,7 @@ std::optional<std::string> SceneInteractor::delete_selected_elements()
                     // invalidate instance id to garanty volume removing from all instances
                     el.instance_id = 0;
                 }
-                l->on_volume_removed(m_selected_project_id, to_remove);
+                l->on_volume_removed(m_selected_project_id, to_remove, changes);
             }
         }
     );
@@ -2092,6 +2187,12 @@ Domain::BedInstance& SceneInteractor::add_bed_instance(size_t config_container_i
     for (const auto& bed_ref : changes.updated_beds)
         invoke_slicing_input_changed(bed_ref);
 
+    invoke_listeners<IConfigContainerListChangedListener>([&](auto* l)
+    {
+        l->on_config_container_bed_list_changed(m_selected_project_id, config_container_id);
+    }
+    );
+
     invoke_listeners<ISceneBedInstanceChangedListener>(
         [&](auto* l) { l->on_bed_instance_updated(m_selected_project_id, {updated}); }
     );
@@ -2204,6 +2305,10 @@ void SceneInteractor::insert_bed_instance(
 
     invoke_listeners<ISceneBedInstanceChangedListener>(
         [&](auto* l) { l->on_bed_instance_updated(project_id, {bed_ref}); }
+    );
+
+    invoke_listeners<IConfigContainerListChangedListener>([&](auto* l)
+        { l->on_config_container_bed_list_changed(m_selected_project_id, config_container_id); }
     );
 }
 
@@ -2357,6 +2462,16 @@ SceneInteractor::erase_bed_instance(Domain::SelectionId project_id, const Domain
     invoke_listeners<ISceneBedInstanceChangedListener>(
         [&](auto* l) { l->on_bed_instance_removed(m_selected_project_id, {bed_ref}); }
     );
+
+    invoke_listeners<IConfigContainerListChangedListener>(
+        [&](auto* l)
+        {
+            l->on_config_container_bed_list_changed(
+                m_selected_project_id,
+                config_container->id().id
+            );
+        }
+    );
 }
 
 void SceneInteractor::remove_bed_instance(const Domain::BedRef& instance, bool allow_to_remove_last_one)
@@ -2453,6 +2568,16 @@ void SceneInteractor::remove_bed_instance(const Domain::BedRef& instance, bool a
 
     if (!allow_to_remove_last_one && cc->bed_instances().empty()) {
         add_bed_instance(cc->id().id);
+    } else {
+        invoke_listeners<IConfigContainerListChangedListener>(
+            [&](auto* l)
+            {
+                l->on_config_container_bed_list_changed(
+                    m_selected_project_id,
+                    instance.config_container_id
+                );
+            }
+        );
     }
 
     // temporary object selection containing model instances to be removed
@@ -3333,43 +3458,6 @@ const WipeTowerGeometry* SceneInteractor::wipe_tower_geometry(
     return &it->second;
 }
 
-void SceneInteractor::on_extruder_candidates_changed(
-    std::vector<unsigned> extruder_candidates,
-    const Domain::SlicingId slicing_id
-)
-{
-    auto it{m_projects.find(slicing_id.project_id)};
-    if (it == m_projects.end()) {
-        return;
-    }
-    SceneInteractorProjectContext& project{it->second};
-
-    const Domain::ConfigContainer* config_container{
-        project.project.find_config_container_by_bed_instance_id(slicing_id.bed_instance_id)
-    };
-    if (config_container == nullptr) {
-        return;
-    }
-    Domain::BedInstance* bed_instance{
-        project.project.find_bed_instance_by_id(slicing_id.bed_instance_id)
-    };
-    if (bed_instance == nullptr) {
-        return;
-    }
-
-    bed_instance->extruder_candidates = std::move(extruder_candidates);
-    invoke_listeners<ISceneBedInstanceChangedListener>(
-        [&](auto* l)
-        {
-            l->on_bed_instance_extruder_candidates_changed(
-                slicing_id.project_id,
-                Domain::BedRef{config_container->id().id, slicing_id.bed_instance_id},
-                bed_instance->extruder_candidates
-            );
-        }
-    );
-}
-
 static std::set<Domain::ElementRef> get_instance_refs(const Model& model)
 {
     std::set<Domain::ElementRef> result;
@@ -3473,7 +3561,7 @@ void SceneInteractor::set_state(
         [&](ISceneChangedListener* l)
         {
             if (!volumes_diff.removed.empty()) {
-                l->on_volume_removed(m_selected_project_id, volumes_diff.removed);
+                l->on_volume_removed(m_selected_project_id, volumes_diff.removed, changes);
             }
             if (!instances_diff.removed.empty()) {
                 l->on_instance_removed(m_selected_project_id, instances_diff.removed);
@@ -3483,7 +3571,7 @@ void SceneInteractor::set_state(
                 l->on_instance_added(m_selected_project_id, instances_diff.added);
             }
             if (!volumes_diff.added.empty()) {
-                l->on_volume_added(m_selected_project_id, volumes_diff.added);
+                l->on_volume_added(m_selected_project_id, volumes_diff.added, changes);
             }
 
             if (!instances_diff.changed.empty()) {
@@ -3503,7 +3591,8 @@ void SceneInteractor::set_state(
                 );
                 l->on_volume_type_changed(
                     m_selected_project_id,
-                    volumes_diff.changed
+                    volumes_diff.changed,
+                    changes
                 );
             }
         }
@@ -3711,7 +3800,8 @@ void SceneInteractor::add_volume_to_active_object(
 )
 {
     const Biz::Scene::ObjectSelection& selection = object_selection();
-    ASSERT(selection.mode == Biz::Scene::SelectionMode::Instance && selection.only_single_object());
+    ASSERT(selection.mode == Biz::Scene::SelectionMode::Instance);
+    ASSERT(selection.only_single_object());
     const Domain::ElementRef& element = selection.elements.front();
 
     const auto& project = m_workbench.project(m_selected_project_id);

@@ -2,7 +2,9 @@
 
 #include "Slic3r/Assert.hpp"
 #include "Slic3r/Semver.hpp"
+#include <set>
 #include <string>
+#include <vector>
 
 #include <nlohmann/json_fwd.hpp>
 
@@ -40,6 +42,8 @@ struct VendorReconfiguration
     Slic3r::Semver current_version;
     Slic3r::Semver recommended_version;
     std::string comment;
+    /// Whether this offer has already been shown to the user. Only NewVendor ever sets it.
+    bool acknowledged{false};
     //std::string changelog_url;
     //std::string new_printers;
 
@@ -49,7 +53,8 @@ struct VendorReconfiguration
         const std::string& archive_id,
         const Slic3r::Semver& current_version,
         const Slic3r::Semver& recommended_version,
-        const std::string& comment
+        const std::string& comment,
+        bool acknowledged = false
         //const std::string& changelog_url,
         //const std::string& new_printers
     ) :
@@ -58,7 +63,8 @@ struct VendorReconfiguration
         vendor_repo_id(archive_id),
         current_version(current_version),
         recommended_version(recommended_version),
-        comment(comment)
+        comment(comment),
+        acknowledged(acknowledged)
         //changelog_url(changelog_url),
         //new_printers(new_printers)
     {}
@@ -186,6 +192,25 @@ public:
             && m_not_in_index.empty()
             && m_new_vendors.empty()
             && m_removals.empty();
+    }
+
+    /// Every source named by a reconfiguration, each once. Performing them needs these sources.
+    std::set<std::string> repo_ids() const
+    {
+        std::set<std::string> ids;
+        for (const std::vector<VendorReconfiguration>* bucket :
+             {&m_regular_updates,
+              &m_forced_updates,
+              &m_forced_downgrades,
+              &m_not_in_index,
+              &m_new_vendors,
+              &m_removals})
+        {
+            for (const VendorReconfiguration& reconfiguration : *bucket) {
+                ids.insert(reconfiguration.vendor_repo_id);
+            }
+        }
+        return ids;
     }
 
 private:

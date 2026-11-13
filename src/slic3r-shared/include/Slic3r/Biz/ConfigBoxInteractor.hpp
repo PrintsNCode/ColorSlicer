@@ -30,14 +30,19 @@ public:
             const Domain::ConfigBox* original_config_box = nullptr
         );
 
+        /** @see ConfigBoxObservableList::set_original_config_box() */
+        void set_original_config_box(const Domain::ConfigBox* original_config_box);
+
         void set_from_original_value(const std::string& key);
 
     private:
         std::weak_ptr<ConfigBoxObservableList> m_config_box_list;
     };
 
-    ConfigBoxInteractor();
-    explicit ConfigBoxInteractor(SetAccessor& set_accessor);
+    ConfigBoxInteractor(
+        Scene::SceneInteractor* scene_interctor,
+        Slicing::SlicingInteractor* slicing_interactor,
+        SetAccessor& set_accessor);
 
     const Domain::ConfigValue* find(const std::string& name) const;
 

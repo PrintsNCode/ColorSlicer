@@ -1,6 +1,7 @@
 #pragma once
 
 #include <functional>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -13,6 +14,7 @@
 #include "Slic3r/Biz/Scene/SceneInteractorProjectContext.hpp"
 #include "Slic3r/Biz/ISelectedProjectChangedListener.hpp"
 #include "Slic3r/Biz/ISelectedConfigContainerChangedListener.hpp"
+#include "Slic3r/Biz/IConfigContainerListChangedListener.hpp"
 #include "Slic3r/Biz/Scene/BedPlacement.hpp"
 #include "Slic3r/Biz/Platform/ListenerList.hpp"
 #include "Slic3r/Domain/ElementRef.hpp"
@@ -31,6 +33,7 @@ namespace Slic3r::Biz {
 class ISelectedBedInstancesChangedListener;
 struct BedTrackingChanges;
 namespace Arrange {struct InstanceTransform2D; }
+namespace ObjectList { class ObjectListInteractor; }
 } // namespace Slic3r::Biz
 
 namespace Slic3r::Biz::Scene {
@@ -49,6 +52,12 @@ enum class TransformState
     InProgress, /* Transform is in progress (i.e. user is dragging the mouse) */
     Completed,  /* Transform was completed (i.e. user released the mouse button) */
     Canceled    /* Transform was canceled (i.e. user pressed ESC key) */
+};
+
+enum class VolumeInsertPosition : int
+{
+    Before, /* Insert the volume right before the target volume */
+    After   /* Insert the volume right after the target volume */
 };
 
 class ISceneChangedListener
@@ -95,8 +104,13 @@ public:
      * @remark The callee is responsible to create volume representations of @p volumes for all existing instances.
      * @param project_id Project the volumes belong to
      * @param volumes Set of volumes to add.
+     * @param bed_tracking_changes Information on changed bed instances
      */
-    virtual void on_volume_added(Domain::SelectionId project_id, const Domain::ElementRefs& volumes)
+    virtual void on_volume_added(
+        Domain::SelectionId project_id,
+        const Domain::ElementRefs& volumes,
+        const BedTrackingChanges& bed_tracking_changes
+    )
     {}
 
     /**
@@ -104,9 +118,13 @@ public:
      * @remark The callee is responsible to remove volume representations of @p volumes from all existing instances.
      * @param project_id Project the volumes belong to
      * @param volumes Set of volumes to add.
+     * @param bed_tracking_changes Information on changed bed instances
      */
-    virtual void
-    on_volume_removed(Domain::SelectionId project_id, const Domain::ElementRefs& volumes)
+    virtual void on_volume_removed(
+        Domain::SelectionId project_id,
+        const Domain::ElementRefs& volumes,
+        const BedTrackingChanges& bed_tracking_changes
+    )
     {}
 
     /**
@@ -128,8 +146,21 @@ public:
      * @brief Called whenever volumes type is changed.
      * @param project_id Project the instances belong to
      * @param volumes List of volumes with changed type
+     * @param bed_tracking_changes Information on changed bed instances
      */
     virtual void on_volume_type_changed(
+        Domain::SelectionId project_id,
+        const Domain::ElementRefs& volumes,
+        const BedTrackingChanges& bed_tracking_changes
+    )
+    {}
+
+    /**
+     * @brief Called whenever volumes change their position within their object's volume list.
+     * @param project_id Project the volumes belong to
+     * @param volumes List of moved volumes
+     */
+    virtual void on_volume_reordered(
         Domain::SelectionId project_id,
         const Domain::ElementRefs& volumes
     )
@@ -143,6 +174,17 @@ public:
     virtual void on_volume_mesh_changed(
         Domain::SelectionId project_id,
         const Domain::ElementRefs& volumes
+    )
+    {}
+
+    /**
+     * @brief Called whenever an object's or volume's display name is changed via edit_name.
+     * @param project_id Project the element belongs to
+     * @param id The renamed element (id.has_volume() == false means the object itself was renamed)
+     */
+    virtual void on_element_renamed(
+        Domain::SelectionId project_id,
+        const Domain::ElementRef& id
     )
     {}
 
@@ -177,11 +219,6 @@ public:
     virtual void on_bed_instance_updated(Domain::SelectionId project_id, const Domain::BedRefs& instances) {};
     virtual void on_bed_instance_removed(Domain::SelectionId project_id, const Domain::BedRefs& instances) {};
     virtual void on_bed_instance_transformed(Domain::SelectionId project_id, const Domain::BedRefs& instances, TransformState state) {};
-    virtual void on_bed_instance_extruder_candidates_changed(
-        Domain::SelectionId project_id,
-        Domain::BedRef instance,
-        const std::vector<unsigned>& extruder_candidates
-    ) {};
 
     /**
      * @brief Called when the virtual bed preview for a project is shown, moved, or hidden.
@@ -200,12 +237,12 @@ class SceneInteractor final :
     public ISelectedConfigContainerChangedListener,
     public Preset::IPresetChangedListener,
     public Slicing::IWipeTowerGeometryListener,
-    public Slicing::IExtruderCandidatesListener,
     public WithListeners<
         ISceneSelectionChangedListener,
         ISceneChangedListener,
         ISceneBedInstanceChangedListener,
         ISelectedBedInstancesChangedListener,
+        IConfigContainerListChangedListener,
         ISlicingInputChangedListener
     >
 {
@@ -213,10 +250,16 @@ public:
     using Transform = Domain::SquareMatrix4d;
 
     explicit SceneInteractor(Domain::Workbench& workbench);
+    ~SceneInteractor() override;
 
     void set_preset_visual_getter(Preset::IPresetVisualGetter* preset_visual_getter)
     {
         m_preset_visual_getter = preset_visual_getter;
+    }
+
+    ObjectList::ObjectListInteractor& object_list_interactor()
+    {
+        return *m_object_list_interactor;
     }
 
     void on_selected_project_changed(size_t index) override;
@@ -316,7 +359,39 @@ public:
         const std::function<void(Domain::ModelObject&)>& modifier
     );
 
+    /**
+     * @brief Modify the SLA data of the given object: support points (and their status), drain holes.
+     * @param object_ref Reference to the object to modify (only object_id is used).
+     * @param modifier Called with the ModelObject to perform modification of the SLA data.
+     */
+    void modify_sla_object_data(
+        const Domain::ElementRef& object_ref,
+        const std::function<void(Domain::ModelObject&)>& modifier
+    );
+
     void edit_name(const Domain::ElementRef& id, const std::string& new_name);
+
+    /**
+     * @brief Whether moving @p volume before/after @p target changes the volume order.
+     * Both have to be volumes of the same object and of the same type,
+     * so the volumes stay grouped by type.
+     */
+    bool can_reorder_volume(
+        const Domain::ElementRef& volume,
+        const Domain::ElementRef& target,
+        VolumeInsertPosition position
+    ) const;
+
+    /**
+     * @brief Moves @p volume right before/after @p target within their object's volume list.
+     * No-op if can_reorder_volume() is false.
+     */
+    void reorder_volume(
+        const Domain::ElementRef& volume,
+        const Domain::ElementRef& target,
+        VolumeInsertPosition position
+    );
+
     void set_printable(const Domain::ElementRef& id, bool is_printable);
     void set_selected_instances_printable(bool is_printable);
     bool selected_instances_printable() const;
@@ -558,8 +633,6 @@ public:
     void update_selection_bounding_box(const std::optional<SelectionExtents>& bounding_box = std::nullopt);
     const std::optional<SelectionExtents> selection_bounding_box() const;
 
-    void on_extruder_candidates_changed(std::vector<unsigned>, const Domain::SlicingId) override;
-
     Domain::ElementRefs
     add_object_to_active_bed(const indexed_triangle_set& its, const std::string& name);
     void add_volume_to_active_object(
@@ -591,6 +664,12 @@ public:
     BedInstances selected_bed_instances() const;
 
 private:
+    // Lets the modifier change the object, then updates the bed placement of its instances and
+    // invalidates the slicing of the beds affected.
+    void modify_object_and_update_beds(
+        const Domain::ElementRef& object_ref,
+        const std::function<void(Domain::ModelObject&)>& modifier
+    );
     void layout_after_project_load(Domain::Project& added_project);
     void notify_listener_on_objects(const std::vector<Domain::ModelObject*>& objects);
     void notify_listener_on_objects(const Domain::Project& project);
@@ -634,6 +713,8 @@ private:
     BedPlacement m_bed_placement;
     BedTracking m_bed_tracking;
     IUndoProvider *m_undo_provider{nullptr};
+
+    std::unique_ptr<ObjectList::ObjectListInteractor> m_object_list_interactor;
 };
 
 struct TransformMemento

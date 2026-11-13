@@ -9,8 +9,10 @@
 #include "Slic3r/Biz/StatusCache.hpp"
 #include "Slic3r/Biz/UserAccount/IUserAccountListener.hpp"
 #include "Slic3r/Biz/IProjectsChangedListener.hpp"
+#include "Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp"
 #include "Slic3r/Biz/PrintHost/PrintHostJobInfoTag.hpp"
 #include "Slic3r/Biz/Connect/IConnectHandlerListener.hpp"
+#include "Slic3r/Biz/Preset/IPrinterPresetSelectorListener.hpp"
 #include "Slic3r/App/Platform/IFileExplorerErrorListener.hpp"
 #include "Slic3r/App/LeftBarTabs.hpp"
 #include "Slic3r/App/Lua/IPluginInstallationListener.hpp"
@@ -29,8 +31,10 @@ class PopNotificationCenter :
     public Biz::RemovableDrive::IRemovableDriveStatusListener,
     public Biz::UserAccount::IUserAccountListener,
     public Biz::IProjectsChangedListener,
+    public Biz::FileOpen::IFileOpenEventListener,
     public Biz::IArrangeEventsListener,
     public Biz::Connect::IConnectHandlerListener,
+    public Biz::Preset::IPrinterPresetSelectorListener,
     public Platform::IFileExplorerErrorListener,
     public Lua::IPluginInstallationListener
 {
@@ -74,6 +78,14 @@ public:
     void on_file_load_started() override;
     void on_geometry_only_imported() override;
 
+    // File open
+    void on_archive_files_skipped(std::size_t count) override;
+    void on_archive_open_failed(const std::string& message) override;
+    void on_archive_postponed(
+        const std::vector<boost::filesystem::path>& archives,
+        Biz::FileOpen::OpenFilesOptions options
+    ) override;
+
     // Arrange
     void on_elements_not_arranged(
         Domain::SelectionId project_id,
@@ -99,6 +111,7 @@ public:
 
     // Connect Message Hander
     void on_connect_handler_error(const std::string& msg) override;
+    void on_printer_preset_selection_warning(const std::string& msg) override;
 
     // File explorer
     void on_file_explorer_error(
@@ -106,9 +119,12 @@ public:
         Platform::FileExplorerError reason
     ) override;
 
-    // Plugin Error Listener
+    // Plugin Installation Listener
     void on_plugin_installation_error(const std::string& error_message) override;
     void on_plugin_installation_succeeded(const Lua::PluginBundleMeta& plugin_bundle_meta) override;
+    void on_plugin_uninstallation_error(const std::string& error_message) override;
+    void on_plugin_uninstallation_succeeded(const std::string& bundle_id, const std::string& version) override;
+
 private:
     void on_job_progress(
         const JobNotificationSpec& spec,
@@ -128,7 +144,8 @@ private:
         const std::string& body,
         const boost::filesystem::path& dest_path,
         const std::string& printables_url,
-        bool is_loaded
+        bool is_loaded,
+        bool is_from_printables
     );
 
     PopNotificationObservableList m_notification_list;

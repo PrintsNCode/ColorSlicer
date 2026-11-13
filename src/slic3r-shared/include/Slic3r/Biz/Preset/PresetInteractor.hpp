@@ -13,6 +13,7 @@
 #include "Slic3r/Biz/Preset/PresetInteractorProjectContext.hpp"
 #include "Slic3r/Biz/Preset/PresetDiffOperation.hpp"
 #include "Slic3r/Biz/Preset/IPresetDialogManager.hpp"
+#include "Slic3r/Biz/Preset/IMacroOverridesChangedListener.hpp"
 #include "Slic3r/Biz/Preset/IO/BundlePaths.hpp"
 #include "Slic3r/Biz/ConfigBoxInteractor.hpp"
 #include "Slic3r/Biz/PrintToolConfigBoxInteractor.hpp"
@@ -26,6 +27,10 @@
 namespace Slic3r::Biz {
 class BackupStore;
 } // namespace Slic3r::Biz
+
+namespace Slic3r::Biz::Slicing {
+class SlicingInteractor;
+} // namespace Slic3r::Biz::Slicing
 
 namespace Slic3r::Biz::Preset {
 
@@ -95,7 +100,8 @@ class PresetInteractor final :
     public ISelectedConfigContainerChangedListener,
     public WithListeners<
         IPresetChangedListener,
-        ISlicingInputChangedListener>,
+        ISlicingInputChangedListener,
+        IMacroOverridesChangedListener>,
     public IPresetNameProvider,
     public IConfigBoxSetter,
     public IPresetVisualGetter
@@ -104,7 +110,8 @@ public:
     PresetInteractor(
         Domain::Workbench& workbench,
         Scene::SceneInteractor& scene_interactor,
-        BackupStore& backup_store
+        BackupStore& backup_store,
+        Slicing::SlicingInteractor& slicing_interactor
     );
 
     PresetInteractor(PresetInteractor&&) = default;
@@ -148,6 +155,11 @@ public:
     const Domain::Preset::HwPrinterConfig& current_printer_config() const;
     const Domain::Preset::EvaluatedPrinterPreset::Preset& current_printer_preset() const;
     const Domain::Preset::SelectedPreset& selected_printer_preset() const;
+
+    PresetItemObservableList& printer_configs()
+    {
+        return m_printer_configs;
+    }
 
     PresetItemObservableList& printer_presets()
     {
@@ -217,6 +229,10 @@ public:
         return m_object_settings_interactor;
     }
 
+    void select_printer_config(
+        const std::string& printer_hw_config_id
+    );
+
     /**
      * @param user - set this to true if action came from user (e.g. clicking a button)
      * so this would invalidate Project in a BackupStore
@@ -240,7 +256,7 @@ public:
      * @param user - set this to true if action came from user (e.g. clicking a button)
      * so this would invalidate Project in a BackupStore
      */
-    void select_material_preset(size_t material_index, const std::string& id, bool user = false);
+    void select_material_preset(size_t material_index, const std::string& id, bool user = false, const std::optional<std::string>& matdb_uuid = std::nullopt);
     /**
      * @param user - set this to true if action came from user (e.g. clicking a button)
      * so this would invalidate Project in a BackupStore
@@ -251,6 +267,8 @@ public:
      * so this would invalidate Project in a BackupStore
      */
     bool select_printer_sheet(const std::string& id, bool user = false);
+
+    void set_material_matdb_uuid(size_t material_index, const std::string& uuid);
 
     using ConfigItemModifyFn = std::function<void(Domain::ConfigItem&)>;
 
@@ -266,10 +284,6 @@ public:
         const std::optional<std::string>& vendor_id = std::nullopt
     ) const override;
 
-    [[nodiscard]] const Domain::Preset::FeatureDefs* get_vendor_tool_feature_defs(
-        const std::optional<std::string>& vendor_id = std::nullopt
-    ) const;
-
     virtual boost::filesystem::path selected_user_preset_path(
         Domain::Preset::PresetKind kind,
         const std::string& preset_name
@@ -280,6 +294,33 @@ public:
         Domain::SelectionId project_id,
         Domain::SelectionId container_id
     ) override;
+
+    bool validate_external_hw_config(const Domain::Preset::HwPrinterConfig&  hw_config) const;
+
+    /**
+     * @brief Find or create appropriate full hw config for given external one and select it
+     * @param printer External hw config
+     * @return void or error message why full hw config creation failed.
+     */
+    tl::expected<void, std::string> select_external_printer_config(
+        const Domain::Preset::HwPrinterConfig& printer
+    );
+
+    /**
+     * @brief Create full hw config from the preset bundle for given external one
+     * @param printer External hw config
+     * @return Full hw config or error message why its creation failed.
+     */
+    tl::expected<Domain::Preset::HwPrinterConfig, std::string> evaluate_external_printer_config(
+        const Domain::Preset::HwPrinterConfig& printer
+    ) const;
+
+    /**
+     * @brief Human readable summary of hw config
+     * @param hw_config Hw config to describe
+     * @return "Printer model / Tools / Sheet / Feeders", missing parts are skipped.
+     */
+    std::string ui_hw_config_summary(const Domain::Preset::HwPrinterConfig& hw_config) const;
 
     ConfigBoxInteractor& printer_cbi();
     PrintToolConfigBoxInteractor& print_tool_cbi();
@@ -297,6 +338,12 @@ public:
     ) override;
 
     void set_item_override(const Domain::ConfigItem& item, bool enable, size_t index = 0) override;
+
+    /// Replaces the macro overrides layer of the given id, or removes it when `layer` is empty.
+    void set_macro_overrides(
+        const std::string& id,
+        std::optional<Domain::MacroOverridesLayerFDM> layer
+    );
 
     template <typename T>
     using ConstRefBoolPair = std::pair<std::reference_wrapper<const T>, bool>;
@@ -836,6 +883,11 @@ public:
 
     bool update_changed_printer_configs(const std::vector<Domain::Preset::HwPrinterConfig>& hw_configs);
 
+    tl::expected<bool, std::string> migrate_hw_config(
+        Domain::Preset::HwPrinterConfig& hw_config
+    );
+
+
 private:
     using ProjectContexts = std::unordered_map<Domain::SelectionId, PresetInteractorProjectContext>;
 
@@ -883,11 +935,12 @@ private:
         Domain::SelectionId project_id,
         Domain::SelectionId config_container_id
     );
-    tl::expected<void, std::string> update_hw_config_features(
+    tl::expected<bool, std::string> migrate_hw_config(
         const Domain::Preset::Bundle& preset_bundle,
         Domain::Preset::HwPrinterConfig& hw_config
     );
-
+    std::vector<Domain::Preset::EvaluatedPrinterPreset>
+    evaluate_presets_for_hw_config(const Domain::Preset::HwPrinterConfig& hw_config) const;
     /**
      * @brief Updates presets for changed hw configuration
      * @return Returns true if the updated presets are valid, otherwise false---the caller is then
@@ -900,6 +953,13 @@ private:
     void save_user_preset_internal(Domain::Preset::PresetKind kind, size_t slot_index, const KeySet& item_names_to_omit, std::string new_name, InvokeLaterBag& bag);
     void update_vendor_presets(std::mutex& mut, Domain::Preset::Bundle& preset_bundle, const std::string& vendor_id);
     void reload_vendor_presets(const std::string& vendor_id);
+    /**
+     * @brief Points all config box interactors of @p selected_preset to the current original
+     * presets.
+     * @note reload_vendor_presets() re-creates the evaluated presets, so the original config
+     * boxes cached in the interactors are dangling afterwards.
+     */
+    void refresh_original_config_boxes(Domain::Preset::SelectedPreset& selected_preset);
 
     void fill_config_container_with_selected_preset(
         Domain::ConfigContainer& cc,
@@ -909,6 +969,11 @@ private:
         ListenerInvokeLaterBag& bag
     );
 
+    void select_printer_config_internal(
+        const std::string& printer_hw_config_id,
+        bool no_data_update,
+        ListenerInvokeLaterBag& bag
+    );
     void select_printer_preset_internal(
         const std::string& printer_hw_config_id,
         const std::string printer_preset_id,
@@ -930,6 +995,7 @@ private:
         size_t material_index,
         const std::string id,
         bool no_data_update,
+        const std::optional<std::string>& matdb_uuid,
         ListenerInvokeLaterBag& bag
     );
 
@@ -937,6 +1003,7 @@ private:
     bool tool_print_has_unsaved_changes(size_t tool_index) const;
     bool material_has_unsaved_changes(size_t tool_index) const;
 
+    void fill_printer_configs(bool no_data_update, ListenerInvokeLaterBag& bag);
     void fill_printer_presets(bool no_data_update, ListenerInvokeLaterBag& bag);
     void fill_print_presets(
         const Domain::Preset::SelectedPreset& selected_preset,
@@ -966,7 +1033,7 @@ private:
         Domain::SelectionId config_container_id
     );
 
-    void duplicate_hw_config_if_needed_and_update(Domain::Preset::HwPrinterConfig& hw_config, ListenerInvokeLaterBag& bag);
+    bool duplicate_hw_config_if_needed_and_update(Domain::Preset::HwPrinterConfig& hw_config, ListenerInvokeLaterBag& bag);
 
     void invoke_slicing_input_changed();
     void invoke_on_preset_value_changed(const Domain::ConfigItem& config_item);
@@ -994,9 +1061,12 @@ private:
     using SetAccessorMap = std::map<const OverridableConfigBoxInteractor*, OverridableConfigBoxInteractor::SetAccessor>;
 
     Domain::Workbench& m_workbench;
+    Scene::SceneInteractor& m_scene_interactor;
+    Slicing::SlicingInteractor& m_slicing_interactor;
     BackupStore& m_backup_store;
     IO::BundlePaths m_bundle_paths;
 
+    PresetItemObservableList m_printer_configs;
     PresetItemObservableList m_printer_presets;
     PresetItemObservableList m_print_presets;
     PresetItemCompoundObservableList::WriteAccessor m_tool_print_presets_writer;

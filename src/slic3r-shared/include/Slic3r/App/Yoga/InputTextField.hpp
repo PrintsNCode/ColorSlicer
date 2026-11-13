@@ -40,6 +40,11 @@ public:
 
     bool hovered() const;
 
+    /**
+     * @brief Focuses the input for editing when it is rendered next time.
+     */
+    void request_focus();
+
     void set_default(double default_value);
     void set_default(const std::string& default_text);
     bool is_changed_value() const override;
@@ -52,7 +57,9 @@ public:
     void set_color(std::optional<Platform::Color> color);
 
 protected:
-    virtual void text_updated_internal() {}
+    virtual void text_updated_internal();
+
+    void visible_updated_internal() override;
 
     InputText* input_text() const;
 

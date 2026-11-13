@@ -15,6 +15,7 @@
 #include "Slic3r/App/AppServices.hpp"
 #include "Slic3r/App/AddPrinterPanel.hpp"
 #include "Slic3r/App/WarningPanel.hpp"
+#include "Slic3r/App/Navigator.hpp"
 #include "Slic3r/Biz/I18N/I18N.hpp"
 #include "Slic3r/Biz/Preset/HwConfigEvaluator.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
@@ -390,7 +391,7 @@ ItemPtr create_offline_button_content()
     icon->set_width(25_fpx);
     icon->set_height(25_fpx);
 
-    auto title{result->emplace_back<Text>(Biz::_u8L("Offline (Restricted environments)"))};
+    auto title{result->emplace_back<Text>(Biz::_u8L("Offline (restricted environments)"))};
     title->set_font_type(Render::ImguiFontType::Bold);
     title->set_font_size(18_fpx);
 
@@ -425,7 +426,7 @@ ItemPtr create_offline_button_content()
     local_row->set_gap(gap);
     local_row->set_align_items(YGAlignCenter);
     emplace_dot(local_row, green);
-    local_row->emplace_back<Text>(Biz::_u8L("Local Network printing enabled"));
+    local_row->emplace_back<Text>(Biz::_u8L("Local network printing enabled"));
 
     return result;
 }
@@ -440,7 +441,7 @@ ItemPtr create_online_button_content()
     icon->set_width(25_fpx);
     icon->set_height(25_fpx);
 
-    auto title{result->emplace_back<Text>(Biz::_u8L("Online (Most convenient)"))};
+    auto title{result->emplace_back<Text>(Biz::_u8L("Online (most convenient)"))};
     title->set_font_type(Render::ImguiFontType::Bold);
     title->set_font_size(18_fpx);
 
@@ -463,7 +464,7 @@ ItemPtr create_online_button_content()
     auto printables_icon{printables_row->emplace_back<Icon>(Render::Icon::Printables)};
     printables_icon->set_width(16_fpx);
     printables_icon->set_height(16_fpx);
-    printables_row->emplace_back<Text>(Biz::_u8L("Printables Database integration"));
+    printables_row->emplace_back<Text>(Biz::_u8L("Printables database integration"));
 
     auto connect_row{result->emplace_back<Item>()};
     connect_row->set_flex_shrink(0);
@@ -472,7 +473,7 @@ ItemPtr create_online_button_content()
     auto connect_icon{connect_row->emplace_back<Icon>(Render::Icon::Connect)};
     connect_icon->set_width(16_fpx);
     connect_icon->set_height(16_fpx);
-    connect_row->emplace_back<Text>(Biz::_u8L("PrusaConnect cloud printing"));
+    connect_row->emplace_back<Text>(Biz::_u8L("Prusa Connect cloud printing"));
 
     return result;
 }
@@ -492,6 +493,8 @@ struct PrinterToAdd
 {
     Domain::Preset::HwPrinterConfig config;
     std::string preset_item_id;
+    /// Set for a local/upload printer, which is stored on finish.
+    std::optional<Biz::PhysicalPrinter::PhysicalPrinterConfig> physical_printer;
 };
 
 static const Domain::Preset::HwToolConfigDef* find_tool_config_def(
@@ -604,28 +607,17 @@ public:
         m_dialog = emplace_back<AddPrinterPanel>(
             project_interactor,
             [this]() { show_dialog(false); },
-            [this](const AddPrinterPanel::Printer& printer)
+            [this](const Biz::PhysicalPrinter::PhysicalPrinterConfig& printer)
             {
-                const Domain::Preset::VendorData& vendor_data{
-                    m_project_interactor.workbench()
-                        .preset_bundle()
-                        .vendor_bundles.at(printer.default_config.vendor_id)
-                        .vendor_data};
-
-                Domain::Preset::HwPrinterConfig config{printer.default_config};
-                config.sheet = Biz::Preset::from_def(
-                    vendor_data,
-                    printer.sheets.sheet_defs.at(printer.sheets.selected_sheet));
-                config.tools.clear();
-                for (std::size_t selected_tool : printer.tools.selected_tools) {
-                    config.tools.push_back(
-                        Biz::Preset::from_def(vendor_data,
-                                              printer.tools.tool_defs.at(selected_tool)));
+                const std::optional<std::string> preset_id{
+                    printer.hw_config ? find_system_preset_id(printer.hw_config->id) : std::nullopt};
+                if (!preset_id) {
+                    return;
                 }
-
-                add_printer(PrinterToAdd{config, printer.preset_item_id});
+                add_printer(PrinterToAdd{*printer.hw_config, *preset_id, printer});
                 show_dialog(false);
             });
+        m_dialog->set_flex_grow(1);
         m_dialog->set_visible(false);
     }
 
@@ -678,21 +670,34 @@ public:
         update_navigation();
     }
 
-    void delete_printer(const std::string& preset_item_id)
+    void delete_printer(Item* printer_item)
     {
         ASSERT(m_printers_to_add.size() == m_printers->items().size());
 
-        auto it{std::ranges::find_if(m_printers_to_add,
-                                     [&](const PrinterToAdd& printer)
-                                     { return printer.preset_item_id == preset_item_id; })};
-
+        const auto it{std::ranges::find(m_printers->items(), printer_item)};
         const std::size_t index{
-            static_cast<std::size_t>(std::distance(m_printers_to_add.begin(), it))};
+            static_cast<std::size_t>(std::distance(m_printers->items().begin(), it))};
         ASSERT(index < m_printers_to_add.size());
 
-        m_printers->remove_later(m_printers->items().at(index));
-        m_printers_to_add.erase(it);
+        m_printers->remove_later(printer_item);
+        m_printers_to_add.erase(m_printers_to_add.begin() + index);
         clear_state();
+    }
+
+    std::optional<std::string> find_system_preset_id(const std::string& hw_config_id) const
+    {
+        const auto& evaluated_presets{
+            m_project_interactor.workbench().preset_bundle().evaluated_presets};
+        const auto it{evaluated_presets.find(hw_config_id)};
+        if (it == evaluated_presets.end()) {
+            return std::nullopt;
+        }
+        for (const Domain::Preset::EvaluatedPrinterPreset& evaluated : it->second) {
+            if (evaluated.preset.origin == Domain::Preset::PresetOrigin::System) {
+                return evaluated.preset.id;
+            }
+        }
+        return std::nullopt;
     }
 
     void clear_printers()
@@ -736,18 +741,14 @@ public:
                 .vendor_bundles.at(config.vendor_id)
                 .vendor_data};
 
-        const auto& presets{preset_interactor.printer_presets().items()};
-        const Biz::Preset::PresetItem* preset{nullptr};
-        for (std::size_t i{}; i < presets.size(); ++i) {
-            if (presets.at(i).hw_printer_config_id == config.id
-                && presets.at(i).origin == Domain::Preset::PresetOrigin::System)
-            {
-                preset = &presets.at(i);
-                break;
-            }
-        }
-        if (!preset) {
+        const std::optional<std::string> preset_id{find_system_preset_id(config.id)};
+        if (!preset_id) {
             return std::nullopt;
+        }
+
+        // SLA printers have no exchangeable tools, keep the default one.
+        if (config.technology != Domain::PrinterTechnology::FFF) {
+            return PrinterToAdd{config, *preset_id};
         }
 
         const std::vector<Domain::Preset::HwToolConfigDef>& tool_defs{
@@ -760,6 +761,7 @@ public:
         std::size_t address{0};
         for (Domain::Preset::HwToolConfig& tool_config : config.tools) {
             const Domain::Preset::HwToolConfigDef* hw_tool_config_def{nullptr};
+            const std::size_t tool_number{address + 1};
             const std::string tool_address{std::to_string(address++)};
             auto it{json["tools"].find(tool_address)};
             if (it != json["tools"].end()) {
@@ -776,12 +778,13 @@ public:
                 tool_config = Biz::Preset::from_def(vendor_data, *hw_tool_config_def);
             } else {
                 warnings[create_printer_identifier(json)].push_back(fmt::format(
-                    fmt::runtime(Biz::_u8L("Failed to synchronize {}. tool")),
-                    tool_address));
+                    // TRN {} is the tool number (counted from 1)
+                    fmt::runtime(Biz::_u8L("Failed to synchronize tool {}")),
+                    tool_number));
             }
         }
 
-        return PrinterToAdd{config, preset->id};
+        return PrinterToAdd{config, *preset_id};
     }
 
     void sync_printers()
@@ -811,7 +814,7 @@ public:
                             m_title->set_sub_title(fmt::format(
                                 fmt::runtime(Biz::_u8L(
                                     // TRN {} is an error message
-                                    "Synchronization failed: {}. Please add your printers manually")),
+                                    "Synchronization failed: {}. Please add your printers manually.")),
                                 error));
                             reload_content_state();
                         });
@@ -836,7 +839,7 @@ public:
                         [this]()
                         {
                             m_title->set_title(Biz::_u8L("Synchronizing printers failed, retrying..."));
-                            m_title->set_sub_title(Biz::_u8L("You can also choose your printer maually."));
+                            m_title->set_sub_title(Biz::_u8L("You can also choose your printer manually."));
                             reload_content_state();
                         });
             }
@@ -850,13 +853,7 @@ public:
             }
         };
 
-        const std::string url{Biz::Network::ServiceConfig::instance().connect_printer_list_url()};
-        const std::string access_token{
-            m_project_interactor.user_account_interactor().access_token()};
-
-        m_project_interactor.connect_message_handler().fetch_printer_data_async(
-            url,
-            access_token,
+        m_project_interactor.connect_printer_service().fetch_printer_list(
             [handle_error, this](const std::string& body)
             {
                 Biz::Platform::PlatformServices::instance()
@@ -890,7 +887,7 @@ public:
 
                                 for (const nlohmann::json& printer_json : root["printers"]) {
                                     if (!printer_json.is_object()) {
-                                        handle_error(Biz::_u8L("No printers in the respose"));
+                                        handle_error(Biz::_u8L("No printers in the response"));
                                         return;
                                     }
                                     std::optional<PrinterToAdd> printer{
@@ -914,7 +911,7 @@ public:
                                 m_title->set_title(
                                     Biz::_u8L("Successfully synchronized your printers"));
                                 m_title->set_sub_title(Biz::_u8L(
-                                    "If you have any offline printers, you can also add them now"));
+                                    "If you have any offline printers, you can also add them now."));
                             } else if (!parsing_failures.empty()) {
                                 SPDLOG_DEBUG("Response body: {}", body);
                                 if (!printers.empty()) {
@@ -938,6 +935,7 @@ public:
                                     m_errors->emplace_back<WarningPanel>(Platform::Color::Error)};
                                 panel->set_rounding(10);
                                 panel->set_warning(
+                                    // TRN {} is the model of the synchronized printer
                                     fmt::format(fmt::runtime(Biz::_u8L("Unable to synchronize {}")),
                                                 error.model),
                                     {fmt::format("uuid: {}", error.uuid), ""});
@@ -957,6 +955,7 @@ public:
                                     .insert(to_display.end(), warnings.begin(), warnings.end());
 
                                 panel->set_warning(
+                                    // TRN {} is the model of the synchronized printer
                                     fmt::format(fmt::runtime(Biz::_u8L("Issues in {}")),
                                                 identifier.model),
                                     to_display);
@@ -987,7 +986,12 @@ public:
         auto it{
             std::ranges::find_if(m_printers_to_add,
                                  [&](const PrinterToAdd& candidate)
-                                 { return candidate.preset_item_id == printer.preset_item_id; })};
+                                 {
+                                     // Physical printers of the same model are distinct printers
+                                     return !candidate.physical_printer
+                                         && !printer.physical_printer
+                                         && candidate.preset_item_id == printer.preset_item_id;
+                                 })};
 
         const std::size_t index{
             static_cast<std::size_t>(std::distance(m_printers_to_add.begin(), it))};
@@ -1017,20 +1021,21 @@ public:
         label->set_orientation(Orientation::Vertical);
         label->set_justify_content(YGJustifyCenter);
         label->set_flex_grow(1);
-        auto title{label->emplace_back<Text>(printer.config.short_name)};
+        auto title{label->emplace_back<Text>(
+            printer.physical_printer ? printer.physical_printer->name : printer.config.short_name)};
         title->set_font_type(Render::ImguiFontType::Bold);
         title->set_flex_shrink(0);
 
-        const std::string sheet_name{printer.config.sheet.name};
-
-        std::string nozzles;
-        for (std::size_t i{}; i < printer.config.tools.size(); ++i) {
-            nozzles += (i == 0 ? "" : ", ") + printer.config.tools[i].name;
+        std::string description;
+        if (printer.config.technology == Domain::PrinterTechnology::FFF) {
+            std::string nozzles;
+            for (std::size_t i{}; i < printer.config.tools.size(); ++i) {
+                nozzles += (i == 0 ? "" : ", ") + printer.config.tools[i].name;
+            }
+            description = fmt::format(fmt::runtime("{} sheet, {}"), printer.config.sheet.name, nozzles);
         }
 
-        auto sub_title{label->emplace_back<Text>(
-            fmt::format(fmt::runtime("{} sheet, {}"), sheet_name, nozzles)
-        )};
+        auto sub_title{label->emplace_back<Text>(description)};
         sub_title->set_text_color(
             m_theme->color_imgui(Platform::Color::Text, Platform::ColorGroup::Disabled));
         sub_title->set_wrap_mode(Yoga::Text::WrapMode::Wrap);
@@ -1042,8 +1047,7 @@ public:
             right_section->emplace_back<LayoutButton>("", Render::Icon::DeleteBtnIcon)};
         delete_button->set_width(19_fpx);
         delete_button->set_aspect_ratio(1);
-        delete_button->callbacks().action = [this, id = printer.preset_item_id]()
-        { delete_printer(id); };
+        delete_button->callbacks().action = [this, printer_item]() { delete_printer(printer_item); };
 
         clear_state();
     }
@@ -1066,7 +1070,7 @@ private:
 
     std::string m_default_title{Biz::_u8L("Choose your printer")};
     std::string m_default_subtitle{
-        Biz::_u8L("If you have more then one printer you can also add them now.")};
+        Biz::_u8L("If you have more than one printer, you can also add them now.")};
 };
 
 class Note : public Item
@@ -1119,7 +1123,7 @@ ItemPtr WelcomeDialog::create_online_decision_screen(const Theme& theme,
     result->content()->emplace_back<Note>(
         Render::Icon::Cog,
         Biz::_u8L("Need more granular control? You can adjust the options"
-                  " individually anytime in Application Preferences."));
+                  " individually anytime in application preferences."));
 
     return result;
 }
@@ -1140,7 +1144,7 @@ ItemPtr create_sentry_screen(const Theme& theme,
     result->content()->emplace_back<Title>(
         Biz::_u8L("Give us a helping hand"),
         Biz::_u8L(
-            "Enable crash reporting, so when PrusaSlicer crashes, a report is automatically"
+            "Enable crash reporting so that when PrusaSlicer crashes, a report is automatically"
             " sent to Prusa Research with precise information about the crash."
             " This significantly increases the chance that we will be able to fix the issue fast!"));
 
@@ -1174,7 +1178,7 @@ ItemPtr create_sentry_screen(const Theme& theme,
 
     result->content()->emplace_back<Note>(
         Render::Icon::Cog,
-        Biz::_u8L("This can be changed anytime in Application Preferences"));
+        Biz::_u8L("This can be changed anytime in application preferences."));
 
     return result;
 }
@@ -1278,7 +1282,7 @@ public:
         result->content()->emplace_back<Title>(
             Biz::_u8L("Sign in to your Prusa Account"),
             Biz::_u8L(
-                "Click the Sign in button to open an external browser, where you can safely sign in to your Prusa account."));
+                "Click the Sign in button to open an external browser, where you can safely sign in to your Prusa Account."));
 
         auto note_section{result->content()->emplace_back<Rectangle>()};
         note_section->set_flex_shrink(0);
@@ -1346,8 +1350,8 @@ private:
     std::function<void()> m_go_to_next;
 };
 
-WelcomeDialog::WelcomeDialog(Biz::ProjectInteractor& project_interactor) :
-    m_project_interactor{project_interactor}
+WelcomeDialog::WelcomeDialog(Biz::ProjectInteractor& project_interactor, Navigator& navigator) :
+    m_project_interactor{project_interactor}, m_navigator(navigator)
 {
     WindowPtr window{std::make_unique<Window>("Welcome dialog")};
     window->set_orientation(Orientation::Vertical);
@@ -1493,8 +1497,17 @@ void WelcomeDialog::finalize(const std::vector<PrinterToAdd>& printers)
         app_settings_advanced.toggle_printer_favorite_preset(printer_preset_item_id, hw_config.id);
     }
 
+    Biz::PhysicalPrinter::PhysicalPrinterInteractor& physical_printer_interactor{
+        m_project_interactor.physical_printer_interactor()};
+    for (const PrinterToAdd& printer : printers) {
+        if (printer.physical_printer) {
+            physical_printer_interactor.save_physical_printer(*printer.physical_printer);
+        }
+    }
+
     m_project_interactor.preset_interactor().select_printer_preset(printer_configs.front().id,
                                                                    printer_preset_item_ids.front());
+    physical_printer_interactor.select_default();
 
     auto& app_config_interactor{AppServices::instance().app_config_interactor()};
     app_config_interactor.set_item_value("printers_only_favorites", Domain::ConfigValue{false});
@@ -1504,7 +1517,7 @@ void WelcomeDialog::finalize(const std::vector<PrinterToAdd>& printers)
     sync_config();
     app_config_interactor.set_item_value("initialized", Domain::ConfigValue{true});
     AppServices::instance().app_config().save();
-    close();
+    m_navigator.set_modal_dialog(ModalDialog::None);
 }
 
 void WelcomeDialog::reload_top_bar()

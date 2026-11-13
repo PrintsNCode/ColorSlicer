@@ -63,14 +63,16 @@ public:
         set_orientation(Orientation::Horizontal);
         set_padding({10_fpx, 5_fpx});
         set_gap(5_fpx);
+        set_flex_shrink(0);
 
         Item* switch_cell = emplace_back<Item>();
         switch_cell->set_width(70_fpx);
         switch_cell->set_justify_content(YGJustifyCenter);
         switch_cell->set_align_items(YGAlignCenter);
+        switch_cell->set_flex_shrink(0);
         m_recover_switch = switch_cell->emplace_back<ToggleButton>(
             std::string{},
-            Biz::_u8L("If turned on, this project will be attempted to be recovered")
+            Biz::_u8L("If checked, PrusaSlicer will attempt to recover this project.")
         );
         m_recover_switch->callbacks().checked_changed = [=](bool checked)
         { selection_changed_fn(); };
@@ -133,7 +135,7 @@ CrashedProjectsDialog::CrashedProjectsDialog(
         Biz::_u8L("Restore project files"),
         Biz::_u8L(
             "PrusaSlicer was closed incorrectly and unsaved projects were found.\n"
-            "Select if you want to attempt a recovery or you want to discard them."
+            "Choose whether to attempt a recovery or discard them."
         )
     );
 
@@ -153,7 +155,8 @@ CrashedProjectsDialog::CrashedProjectsDialog(
     m_scroll_area->set_orientation(Orientation::Vertical);
     m_scroll_area->set_gap(5_fpx);
     m_scroll_area->set_height(325_fpx);
-    m_scroll_area->set_padding(Paddings{0, 0, 12, 0});
+    m_scroll_area->set_padding(Paddings{0, 0, 12_fpx, 12_fpx});
+    m_scroll_area->set_window_flags(ImGuiWindowFlags_HorizontalScrollbar);
 
     add_separator();
 
@@ -224,7 +227,9 @@ void CrashedProjectsDialog::update_button_label()
     } else {
         m_recover_selected_button->set_label(
             fmt::format(
-                fmt::runtime(Biz::_u8L("Recover {} discard {} projects")),
+                // TRN Button label. 1st {} is the count of projects to recover, 2nd {} is the count
+                // of projects to discard
+                fmt::runtime(Biz::_u8L("Recover {}, discard {} projects")),
                 to_recover,
                 to_discard
             )

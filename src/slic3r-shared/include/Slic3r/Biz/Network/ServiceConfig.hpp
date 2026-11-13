@@ -44,6 +44,11 @@ public:
         return m_connect_url + "/slicer-print";
     }
 
+    std::string connect_graphql_url() const
+    {
+        return m_connect_api_url + "/graphql";
+    }
+
     const std::string& account_url() const
     {
         return m_account_url;
@@ -109,15 +114,22 @@ public:
         return m_printables_url;
     }
 
+    const std::string& plugin_marketplace_url() const
+    {
+        return m_plugin_marketplace_url;
+    }
+
     static ServiceConfig& instance();
 
 private:
     std::string m_connect_url;
+    std::string m_connect_api_url;
     std::string m_account_url;
     std::string m_account_client_id;
     std::string m_media_url;
     std::string m_preset_repo_url;
     std::string m_printables_url;
+    std::string m_plugin_marketplace_url;
     bool m_webdev_enabled{false};
 };
 

@@ -24,12 +24,15 @@ using FDMConfigLocation::Filament;
 using FDMConfigLocation::Project;
 using FDMConfigLocation::Object;
 using FDMConfigLocation::Volume;
+using FDMConfigLocation::MacroOverrides;
+using FDMConfigLocation::MacroSlotOverrides;
 
 // Define the static object holding all definitions. Provide list of acceptable
 // boxes and the init function.
 const ConfigDefinitions& get_defs_fdm() {
     static ConfigDefinitions defs_fdm(
-        {Printer, Filament, Print, Tool, Object, Volume, Project}, fdm_config_init_fn
+        {Printer, Filament, Print, Tool, Object, Volume, Project, MacroOverrides, MacroSlotOverrides},
+        fdm_config_init_fn
     );
     return defs_fdm;
 }
@@ -66,6 +69,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 // Defs from void PrintConfigDef::init_fff_params() follow:
     def = defs.add("arc_fitting", typeid(EnumWrapper));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Arc fitting");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ResolutionGCodeData;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -80,6 +84,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("automatic_extrusion_widths", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Automatic extrusion widths calculation");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -91,7 +96,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("automatic_infill_combination", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume, Tool };
+    def->overrides_in = Locations{ Object, Volume, Tool, MacroSlotOverrides };
     def->label = L("Automatic infill combination");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_InfillCombination;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -103,7 +108,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("automatic_infill_combination_max_layer_height", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume, Tool };
+    def->overrides_in = Locations{ Object, Volume, Tool, MacroSlotOverrides };
     def->label = L("Automatic infill combination - Max layer height");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_InfillCombination;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -121,12 +126,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("avoid_crossing_curled_overhangs", typeid(bool));
     def->location = Print;
-    def->label = L("Avoid crossing curled overhangs (Experimental)");
+    def->overrides_in = Locations{ MacroOverrides };
+    def->label = L("Avoid crossing curled overhangs (experimental)");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_TravelAvoidance;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
-    // TRN PrintSettings: "Avoid crossing curled overhangs (Experimental)"
+    // TRN PrintSettings: "Avoid crossing curled overhangs (experimental)"
     def->tooltip = L("Plan travel moves such that the extruder avoids areas where the filament may be curled up. "
                    "This is mostly happening on steeper rounded overhangs and may cause a crash with the nozzle. "
                    "This feature slows down both the print and the G-code generation.");
@@ -134,6 +140,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("avoid_crossing_perimeters", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Avoid crossing perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_TravelAvoidance;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -146,6 +153,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("avoid_crossing_perimeters_max_detour", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Avoid crossing perimeters - Max detour length");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_TravelAvoidance;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -160,6 +168,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bed_temperature", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Bed other layers");
     def->gui_type = ConfigItemDef::GUIType::spinbox;
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_BedChamberTemperature;
@@ -175,8 +184,9 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("chamber_temperature", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     // TRN: Label of a configuration parameter: Nominal chamber temperature.
-    def->label = L("Chamber Nominal temperature");
+    def->label = L("Chamber nominal temperature");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_BedChamberTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
     def->order = 3;
@@ -191,8 +201,9 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("chamber_minimal_temperature", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     // TRN: Label of a configuration parameter: Minimal chamber temperature
-    def->label = L("Chamber Minimal temperature");
+    def->label = L("Chamber minimal temperature");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_BedChamberTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
     def->order = 2;
@@ -208,6 +219,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bed_temperature_extruder", typeid(int));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Bed temperature by extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -227,7 +239,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->order = 3;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("This custom code is inserted at every layer change, right before the Z move. "
-                   "Note that you can use placeholder variables for all Slic3r settings as well "
+                   "Note that you can use placeholder variables for all PrusaSlicer settings as well "
                    "as [layer_num] and [layer_z].");
     def->multiline = true;
     def->full_width = true;
@@ -241,7 +253,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_CustomGCode;
     def->order = 6;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->tooltip = L("This code is inserted between objects when using sequential printing. By default extruder and bed temperature are reset using non-wait command; however if M104, M109, M140 or M190 are detected in this custom code, Slic3r will not add temperature commands. Note that you can use placeholder variables for all Slic3r settings, so you can put a \"M109 S[first_layer_temperature]\" command wherever you want.");
+    def->tooltip = L("This code is inserted between objects when using sequential printing. By default extruder and bed temperature are reset using non-wait command; however if M104, M109, M140 or M190 are detected in this custom code, PrusaSlicer will not add temperature commands. Note that you can use placeholder variables for all PrusaSlicer settings, so you can put a \"M109 S[first_layer_temperature]\" command wherever you want.");
     def->multiline = true;
     def->full_width = true;
     def->height = 12;
@@ -249,7 +261,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bottom_solid_layers", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Bottom solid layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_TopBottomShells;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -262,7 +274,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bottom_solid_min_thickness", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_TopBottomShells;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
     def->order = 4;
@@ -277,7 +289,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bridge_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Bridge");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_BridgesAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -291,7 +303,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bridge_angle", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Bridging angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -306,6 +318,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bridge_fan_speed", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Bridges fan speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FanControlLimits;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -319,7 +332,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bridge_flow_ratio", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Bridge flow ratio");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -335,7 +348,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_one_perimeter_type", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Single perimeter on top surfaces");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_OnlyOnePerimeter;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -351,7 +364,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("only_one_perimeter_first_layer", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Only one perimeter on first layer");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_OnlyOnePerimeter;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -362,7 +375,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("bridge_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Bridges");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -376,7 +389,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("over_bridge_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     // TRN: Label for speed used to print infill above bridges.
     def->label = L("Over bridges");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
@@ -392,7 +405,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def             = defs.add("enable_dynamic_overhang_speeds", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label      = L("Enable dynamic overhang speeds");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_DynamicOverhangSpeed;
     def->category   = ConfigItemDef::Category::Print_Speed;
@@ -410,7 +423,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def             = defs.add("overhang_speed_0", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label      = L("speed for 0% overlap (bridge)");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_DynamicOverhangSpeed;
     def->category   = ConfigItemDef::Category::Print_Speed;
@@ -424,7 +437,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def             = defs.add("overhang_speed_1", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label      = L("speed for 25% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_DynamicOverhangSpeed;
     def->category   = ConfigItemDef::Category::Print_Speed;
@@ -438,7 +451,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def             = defs.add("overhang_speed_2", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label      = L("speed for 50% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_DynamicOverhangSpeed;
     def->category   = ConfigItemDef::Category::Print_Speed;
@@ -452,7 +465,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def             = defs.add("overhang_speed_3", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label      = L("speed for 75% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_DynamicOverhangSpeed;
     def->category   = ConfigItemDef::Category::Print_Speed;
@@ -466,6 +479,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def          = defs.add("enable_dynamic_fan_speeds", typeid(bool));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label   = L("Enable dynamic fan speeds");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_DynamicFanSpeed;
     def->category   = ConfigItemDef::Category::Filament_Cooling;
@@ -481,6 +495,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("overhang_fan_speed_0", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label    = L("speed for 0% overlap (bridge)");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_DynamicFanSpeed;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -494,6 +509,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("overhang_fan_speed_1", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label    = L("speed for 25% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_DynamicFanSpeed;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -507,6 +523,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("overhang_fan_speed_2", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label    = L("speed for 50% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_DynamicFanSpeed;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -520,6 +537,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("overhang_fan_speed_3", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label    = L("speed for 75% overlap");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_DynamicFanSpeed;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -533,7 +551,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("brim_width", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Brim width");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Brim;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -548,7 +566,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("brim_type", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Brim type");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Brim;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -566,7 +584,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("brim_separation", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Brim separation gap");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Brim;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -631,11 +649,12 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->tooltip = L("When printing multiple objects or copies, this feature will complete "
                    "each object before moving onto next one (and starting it from its bottom layer). "
                    "This feature is useful to avoid the risk of ruined prints. "
-                   "Slic3r should warn and prevent you from extruder collisions, but beware.");
+                   "PrusaSlicer should warn and prevent you from extruder collisions, but beware.");
     def->init_fn = init_with(false);
 
     def               = defs.add("cooling", typeid(bool));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Enable auto cooling");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingLogic;
     def->category     = ConfigItemDef::Category::Filament_Cooling;
@@ -648,6 +667,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("cooling_slowdown_logic", typeid(EnumWrapper));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Cooling slowdown logic");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingLogic;
     def->category     = ConfigItemDef::Category::Filament_Cooling;
@@ -673,6 +693,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("cooling_perimeter_transition_distance", typeid(double));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Perimeter transition distance");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingLogic;
     def->category     = ConfigItemDef::Category::Filament_Cooling;
@@ -710,7 +731,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("default_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
     def->order = 0;
@@ -740,6 +761,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("disable_fan_first_layers", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Disable fan for the first");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FirstLayers;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -755,7 +777,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("dont_support_bridges", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Don't support bridges");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -813,7 +835,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ensure_vertical_shell_thickness", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Ensure vertical shell thickness");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -830,7 +852,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_fill_pattern", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Top fill pattern");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_SurfacePatterns;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -844,17 +866,17 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
         InfillPattern::ipMonotonic,
         {{int(InfillPattern::ipRectilinear), "rectilinear", L("Rectilinear")},
          {int(InfillPattern::ipMonotonic), "monotonic", L("Monotonic")},
-         {int(InfillPattern::ipMonotonicLines), "monotoniclines", L("Monotonic Lines")},
-         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned Rectilinear")},
+         {int(InfillPattern::ipMonotonicLines), "monotoniclines", L("Monotonic lines")},
+         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned rectilinear")},
          {int(InfillPattern::ipConcentric), "concentric", L("Concentric")},
-         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert Curve")},
-         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean Chords")},
-         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram Spiral")}}
+         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert curve")},
+         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean chords")},
+         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram spiral")}}
     );
 
     def = defs.add("bottom_fill_pattern", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Bottom fill pattern");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_SurfacePatterns;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -867,17 +889,17 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
         InfillPattern::ipMonotonic,
         {{int(InfillPattern::ipRectilinear), "rectilinear", L("Rectilinear")},
          {int(InfillPattern::ipMonotonic), "monotonic", L("Monotonic")},
-         {int(InfillPattern::ipMonotonicLines), "monotoniclines", L("Monotonic Lines")},
-         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned Rectilinear")},
+         {int(InfillPattern::ipMonotonicLines), "monotoniclines", L("Monotonic lines")},
+         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned rectilinear")},
          {int(InfillPattern::ipConcentric), "concentric", L("Concentric")},
-         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert Curve")},
-         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean Chords")},
-         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram Spiral")}}
+         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert curve")},
+         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean chords")},
+         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram spiral")}}
     );
 
     def = defs.add("external_perimeter_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("External perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -894,7 +916,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("external_perimeter_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("External perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -910,7 +932,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("external_perimeters_first", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("External perimeters first");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -922,21 +944,21 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("extra_perimeters", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Extra perimeters if needed");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("Add more perimeters when needed for avoiding gaps in sloping walls. "
-                   "Slic3r keeps adding perimeters, until more than 70% of the loop immediately above "
+                   "PrusaSlicer keeps adding perimeters, until more than 70% of the loop immediately above "
                    "is supported.");
     def->init_fn = init_with(true);
 
     def = defs.add("extra_perimeters_on_overhangs", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
-    def->label = L("Extra perimeters on overhangs (Experimental)");
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
+    def->label = L("Extra perimeters on overhangs (experimental)");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
     def->order = 2;
@@ -991,7 +1013,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_General_SequentialPrintingLimits;
     def->order = 0;
     def->label = L("Height");
-    def->tooltip = L("Only used when 'Print Settings -> Complete individual objects' is active. Set this to the vertical "
+    def->tooltip = L("Only used when 'Print settings -> Complete individual objects' is active. Set this to the vertical "
                    "distance between your nozzle tip and (usually) the X carriage rods. Used to check for collisions "
                    "with previously printed objects and to prevent them when arranging.\n"
                    "The value is ignored for most Prusa printers, which come with more detailed extruder model.");
@@ -1006,7 +1028,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_General_SequentialPrintingLimits;
     def->order = 1;
     def->label = L("Radius");
-    def->tooltip = L("Only used when 'Print Settings -> Complete individual objects' is active. Set this to a radius "
+    def->tooltip = L("Only used when 'Print settings -> Complete individual objects' is active. Set this to a radius "
                      "of a nozzle-centered cylinder big enough to enclose the extruder assembly. Used to check for collisions "
                      "with previously printed objects and to prevent them when arranging.\n"
                      "The value is ignored for most Prusa printers, which come with more detailed extruder model.");
@@ -1016,6 +1038,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("extrusion_multiplier", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Extrusion multiplier");
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_ExtrusionCalibration;
     def->category = ConfigItemDef::Category::Filament_ExtrusionCalibration;
@@ -1030,14 +1053,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Default extrusion width");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("Set this to a non-zero value to allow a manual extrusion width. "
-                   "If left to zero, Slic3r derives extrusion widths from the nozzle diameter "
+                   "If left to zero, PrusaSlicer derives extrusion widths from the nozzle diameter "
                    "(see the tooltips for perimeter extrusion width, infill extrusion width etc). "
                    "If expressed as percentage (for example: 230%), it will be computed over nozzle diameter.");
     def->units = {L("mm"), L("%")};;
@@ -1049,6 +1072,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fan_always_on", typeid(bool));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Keep fan always on");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FanControlLimits;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -1060,6 +1084,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fan_below_layer_time", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Enable fan if layer print time is below");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingThresholds;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -1089,6 +1114,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_colour", typeid(std::string));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Color");
     // TODO: This option is temporarily hidden from the UI, until we handle it properly.
     // The plan is to make it std::optional<std::string>. Currently it is used as
@@ -1117,6 +1143,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_max_volumetric_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Max volumetric speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Overrides_PrintSpeedOverride;
     def->category = ConfigItemDef::Category::Filament_Overrides;
@@ -1130,6 +1157,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_infill_max_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Max non-crossing infill speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Overrides_PrintSpeedOverride;
     def->category = ConfigItemDef::Category::Filament_Overrides;
@@ -1144,6 +1172,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_infill_max_crossing_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Max crossing infill speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Overrides_PrintSpeedOverride;
     def->category = ConfigItemDef::Category::Filament_Overrides;
@@ -1158,6 +1187,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_loading_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Loading speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MovementTiming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1170,6 +1200,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_loading_speed_start", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Loading speed at the start");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MovementTiming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1182,6 +1213,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_unloading_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Unloading speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MovementTiming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1195,6 +1227,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_unloading_speed_start", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Unloading speed at the start");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MovementTiming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1207,6 +1240,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_toolchange_delay", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Delay after unloading");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1221,6 +1255,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_stamping_loading_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Stamping loading speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1233,6 +1268,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_stamping_distance", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Stamping distance measured from the center of the cooling tube");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1246,6 +1282,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_cooling_moves", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Number of cooling moves");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1259,6 +1296,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_cooling_initial_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Speed of the first cooling move");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1271,6 +1309,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_minimal_purge_on_wipe_tower", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Minimal purge on wipe tower");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_WipeTowerPurging;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1278,7 +1317,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("After a tool change, the exact position of the newly loaded filament inside "
                      "the nozzle may not be known, and the filament pressure is likely not yet stable. "
-                     "Before purging the print head into an infill or a sacrificial object, Slic3r will always prime "
+                     "Before purging the print head into an infill or a sacrificial object, PrusaSlicer will always prime "
                      "this amount of material into the wipe tower to produce successive infill or sacrificial object extrusions reliably.");
     def->units = {L("mm³")};
     def->min = 0;
@@ -1286,6 +1325,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_cooling_final_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Speed of the last cooling move");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1298,12 +1338,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_purge_multiplier", typeid(Percentage));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Purge volume multiplier");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_WipeTowerPurging;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->tooltip = L("Purging volume on the wipe tower is determined by 'multimaterial_purging' in Printer Settings. "
+    def->tooltip = L("Purging volume on the wipe tower is determined by 'multimaterial_purging' in Printer settings. "
                      "This option allows to modify the volume on filament level. "
                      "Note that the project can override this by setting project-specific values.");
     def->units = {L("%")};
@@ -1312,6 +1353,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_ramming_parameters", typeid(std::string));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Ramming parameters");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_TipShapingCooling;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1323,6 +1365,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_ramming_temperature_delta", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Ramming temperature variation");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MultitoolRamming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1333,6 +1376,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_ramming_initial_delay", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Pause before ramming");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MultitoolRamming;;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1343,18 +1387,20 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_multitool_ramming", typeid(bool));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Enable ramming for multitool setups");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MultitoolRamming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
-    def->tooltip = L("Perform ramming when using multitool printer (i.e. when the 'Single Extruder Multimaterial' in Printer Settings is unchecked). "
+    def->tooltip = L("Perform ramming when using multitool printer (i.e. when the 'Single extruder multimaterial' in Printer settings is unchecked). "
                      "When checked, a small amount of filament is rapidly extruded on the wipe tower just before the toolchange. "
                      "This option is only used when the wipe tower is enabled.");
     def->init_fn = init_with(false);
 
     def = defs.add("filament_multitool_ramming_volume", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Multitool ramming volume");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MultitoolRamming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1367,6 +1413,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_multitool_ramming_flow", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Multitool ramming flow");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_MultitoolRamming;
     def->category = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1379,6 +1426,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("filament_flush_volume", typeid(double));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Flush volume");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_FlushParameters;
     def->category     = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1393,6 +1441,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("filament_flush_speed", typeid(double));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Flush speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MultiMaterial_FlushParameters;
     def->category     = ConfigItemDef::Category::Filament_MultiMaterial;
@@ -1407,6 +1456,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_diameter", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Diameter");
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_ExtrusionCalibration;
     def->category = ConfigItemDef::Category::Filament_ExtrusionCalibration;
@@ -1420,10 +1470,11 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_density", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Density");
-    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
+    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_CostWeight;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
-    def->order = 5;
+    def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("Enter your filament density here. This is only for statistical information. "
                    "A decent way is to weigh a known length of filament and compute the ratio "
@@ -1434,6 +1485,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_type", typeid(std::string));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Filament type");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
@@ -1466,20 +1518,22 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_soluble", typeid(bool));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Soluble material");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
-    def->order = 3;
+    def->order = 2;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("Soluble material is most likely used for a soluble support.");
     def->init_fn = init_with(false);
 
     def = defs.add("filament_abrasive", typeid(bool));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Abrasive material");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
-    def->order = 2;
+    def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("This flag means that the material is abrasive and requires a hardened nozzle. The value is used by the printer to check it.");
     def->init_fn = init_with(false);
@@ -1487,9 +1541,9 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("filament_cost", typeid(double));
     def->location = Filament;
     def->label = L("Cost");
-    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
+    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_CostWeight;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
-    def->order = 4;
+    def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("Enter your filament cost per kg here. This is only for statistical information.");
     def->units = {L("money/kg")};
@@ -1498,10 +1552,11 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_spool_weight", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Spool weight");
-    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_MaterialProperty;
+    def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_CostWeight;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
-    def->order = 6;
+    def->order = 2;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("Enter weight of the empty filament spool. "
                      "One may weigh a partially consumed filament spool before printing and one may compare the measured weight "
@@ -1524,6 +1579,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_shrinkage_compensation_xy", typeid(Percentage));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_Compensation;
     def->category = ConfigItemDef::Category::Filament_ExtrusionCalibration;
     def->order = 0;
@@ -1539,6 +1595,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("filament_shrinkage_compensation_z", typeid(Percentage));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_Compensation;
     def->category = ConfigItemDef::Category::Filament_ExtrusionCalibration;
     def->order = 1;
@@ -1554,14 +1611,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fill_angle", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Fill angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
     def->order = 4;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("Default base angle for infill orientation. Cross-hatching will be applied to this. "
-                   "Bridges will be infilled using the best direction Slic3r can detect, so this setting "
+                   "Bridges will be infilled using the best direction PrusaSlicer can detect, so this setting "
                    "does not affect them.");
     def->units = {L("°")};
     def->min = 0;
@@ -1570,7 +1627,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fill_density", typeid(Percentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Fill density");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_DensityPattern;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -1600,7 +1657,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fill_pattern", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Fill pattern");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_DensityPattern;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -1610,7 +1667,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->init_fn = init_with(
         InfillPattern::ipStars,
         {{int(InfillPattern::ipRectilinear), "rectilinear", L("Rectilinear")},
-         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned Rectilinear")},
+         {int(InfillPattern::ipAlignedRectilinear), "alignedrectilinear", L("Aligned rectilinear")},
          {int(InfillPattern::ipGrid), "grid", L("Grid")},
          {int(InfillPattern::ipTriangles), "triangles", L("Triangles")},
          {int(InfillPattern::ipStars), "stars", L("Stars")},
@@ -1618,20 +1675,20 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
          {int(InfillPattern::ipLine), "line", L("Line")},
          {int(InfillPattern::ipConcentric), "concentric", L("Concentric")},
          {int(InfillPattern::ipHoneycomb), "honeycomb", L("Honeycomb")},
-         {int(InfillPattern::ip3DHoneycomb), "3dhoneycomb", L("3D Honeycomb")},
+         {int(InfillPattern::ip3DHoneycomb), "3dhoneycomb", L("3D honeycomb")},
          {int(InfillPattern::ipGyroid), "gyroid", L("Gyroid")},
-         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert Curve")},
-         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean Chords")},
-         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram Spiral")},
-         {int(InfillPattern::ipAdaptiveCubic), "adaptivecubic", L("Adaptive Cubic")},
-         {int(InfillPattern::ipSupportCubic), "supportcubic", L("Support Cubic")},
+         {int(InfillPattern::ipHilbertCurve), "hilbertcurve", L("Hilbert curve")},
+         {int(InfillPattern::ipArchimedeanChords), "archimedeanchords", L("Archimedean chords")},
+         {int(InfillPattern::ipOctagramSpiral), "octagramspiral", L("Octagram spiral")},
+         {int(InfillPattern::ipAdaptiveCubic), "adaptivecubic", L("Adaptive cubic")},
+         {int(InfillPattern::ipSupportCubic), "supportcubic", L("Support cubic")},
          {int(InfillPattern::ipLightning), "lightning", L("Lightning")},
-         {int(InfillPattern::ipZigZag), "zigzag", L("Zig Zag")}}
+         {int(InfillPattern::ipZigZag), "zigzag", L("Zigzag")}}
     );
 
     def = defs.add("first_layer_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_FirstLayerAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -1645,7 +1702,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_acceleration_over_raft", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("First object layer over raft interface");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_FirstLayerAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -1659,7 +1716,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_bed_temperature", typeid(int));
     def->location = Filament;
-    def->label = L("Bed First layer");
+    def->overrides_in = Locations{ MacroSlotOverrides };
+    def->label = L("Bed first layer");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_BedChamberTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
     def->order = 0;
@@ -1674,7 +1732,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -1692,7 +1750,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_height", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = { Tool, MacroSlotOverrides };
     def->compatibility_rule = CompatibilityRule::Min;
     def->label = L("First layer height");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_LayerHeight;
@@ -1709,7 +1767,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     // This parameter does not exist on the backend.
     def = defs.add("first_layer_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -1726,7 +1784,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_infill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer infill speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1734,7 +1792,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to the infill print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the infill speed. "
+                   "(for example: 40%) it will be a percentage of the infill speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1743,7 +1801,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_solid_infill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer solid infill speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -1751,7 +1809,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to the solid infill print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the solid infill speed. "
+                   "(for example: 40%) it will be a percentage of the solid infill speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1760,7 +1818,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_perimeter_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer perimeter speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1768,7 +1826,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to the perimeter print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the perimeter speed. "
+                   "(for example: 40%) it will be a percentage of the perimeter speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1777,7 +1835,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_external_perimeter_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer perimeter speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1785,7 +1843,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to the external perimeter print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the external perimeter speed. "
+                   "(for example: 40%) it will be a percentage of the external perimeter speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1794,7 +1852,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_support_material_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer support material speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1802,7 +1860,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to any support print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the support material speed. "
+                   "(for example: 40%) it will be a percentage of the support material speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1811,7 +1869,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_top_solid_infill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer top solid infill speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1819,7 +1877,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to any top solid print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the top solid infill speed. "
+                   "(for example: 40%) it will be a percentage of the top solid infill speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1828,7 +1886,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_gap_fill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("First layer gap fill speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Hidden;
@@ -1836,7 +1894,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
     def->tooltip = L("If expressed as absolute value in mm/s, this speed will be applied to any gap fill print moves "
                    "of the first layer. If expressed as a percentage "
-                   "(for example: 40%) it will be a percantage of the gap fill speed. "
+                   "(for example: 40%) it will be a percentage of the gap fill speed. "
                    "Note that 0 means that the \"First layer speed\" value will be used.");
     def->units = {L("mm/s"), L("%")};
     def->min = 0;
@@ -1845,7 +1903,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_speed_over_raft", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Speed of object first layer over raft interface");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_FirstLayer;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -1861,7 +1919,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("first_layer_temperature", typeid(int));
     def->location = Filament;
-    def->label = L("Nozzle First layer");
+    def->overrides_in = Locations{ MacroSlotOverrides };
+    def->label = L("Nozzle first layer");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_NozzleTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
     def->order = 0;
@@ -1876,6 +1935,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("full_fan_speed_layer", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Full fan speed at layer");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FirstLayers;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -1891,8 +1951,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fuzzy_skin", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
-    def->label = L("Fuzzy Skin");
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
+    def->label = L("Fuzzy skin");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_FuzzySkin;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
     def->order = 0;
@@ -1907,7 +1967,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fuzzy_skin_thickness", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Fuzzy skin thickness");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_FuzzySkin;
     def->gui_type = ConfigItemDef::GUIType::textfield;
@@ -1921,13 +1981,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("fuzzy_skin_point_dist", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Fuzzy skin point distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_FuzzySkin;
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
     def->order = 1;
-    def->tooltip = L("Perimeters will be split into multiple segments by inserting Fuzzy skin points. "
+    def->tooltip = L("Perimeters will be split into multiple segments by inserting fuzzy skin points. "
                      "Lowering the Fuzzy skin point distance will increase the number of randomly offset points on the perimeter wall.");
     def->units = {L("mm")};
     def->min = 0;
@@ -1935,7 +1995,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("gap_fill_enabled", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Fill gaps");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -1946,7 +2006,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("gap_fill_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Gap fill");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2008,7 +2068,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->tooltip = L("Selects whether labels should be exported at object boundaries and in what format.\n"
                      "OctoPrint = comments to be consumed by OctoPrint CancelObject plugin.\n"
                      "Firmware = firmware specific G-code (it will be chosen based on firmware flavor and it can end up to be empty).\n\n"
-                     "This settings is NOT compatible with Single Extruder Multi Material setup and Wipe into Object / Wipe into Infill.");
+                     "This settings is NOT compatible with Single extruder multi material setup and Wipe into object / Wipe into infill.");
     def->init_fn = init_with(
         LabelObjectsStyle::Disabled,
         {{int(LabelObjectsStyle::Disabled), "disabled", L("Disabled")},
@@ -2049,7 +2109,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2062,7 +2122,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2076,7 +2136,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_solid_infill_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Top solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2090,6 +2150,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower_acceleration", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Wipe tower");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_WipeTowerAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2104,7 +2165,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("travel_acceleration", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Travel");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_TravelsAcceleration;
     def->category     = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2119,7 +2180,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def               = defs.add("travel_short_distance_acceleration", typeid(double));
     def->location     = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label        = L("Travel short distance acceleration");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_TravelsAcceleration;
     def->category     = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2134,7 +2195,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_every_layers", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Combine infill every");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_InfillCombination;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2149,7 +2210,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_anchor", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Length of the infill anchor");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_WallAnchoring;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2177,7 +2238,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_anchor_max", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Maximum length of the infill anchor");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_WallAnchoring;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2204,7 +2265,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_extruder", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Infill extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2216,7 +2277,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -2234,6 +2295,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_first", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Infill before perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2244,7 +2306,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_overlap", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Infill/perimeters overlap");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Overlap;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2258,7 +2320,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("infill_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2287,7 +2349,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("interface_shells", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Interface shells");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2300,7 +2362,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("mmu_segmented_region_max_width", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Maximum width of a segmented region");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2313,7 +2375,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("mmu_segmented_region_interlocking_depth", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Interlocking depth of a segmented region");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2328,7 +2390,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ironing", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Enable ironing");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_Ironing;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2339,7 +2401,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_beam", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Use beam interlocking");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2350,7 +2412,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_beam_width", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Interlocking beam width");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2363,7 +2425,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_orientation", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Interlocking direction");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2377,7 +2439,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_beam_layer_count", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Interlocking beam layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2389,7 +2451,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_depth", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Interlocking depth");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2401,7 +2463,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def           = defs.add("interlocking_boundary_avoidance", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label    = L("Interlocking boundary avoidance");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_BondingInterlocking;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2413,13 +2475,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ironing_type", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
-    def->label = L("Ironing Type");
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
+    def->label = L("Ironing type");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_Ironing;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::combobox;
-    def->tooltip = L("Ironing Type");
+    def->tooltip = L("Ironing type");
     def->init_fn = init_with(
         IroningType::TopSurfaces,
         {{int(IroningType::TopSurfaces), "top", L("All top surfaces")},
@@ -2429,7 +2491,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ironing_flowrate", typeid(Percentage));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Flow rate");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_Ironing;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2442,7 +2504,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ironing_spacing", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Spacing between ironing passes");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_Ironing;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2455,7 +2517,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ironing_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Ironing speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_Ironing;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2475,7 +2537,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::textfield;
     def->tooltip = L("This custom code is inserted at every layer change, right after the Z move "
                    "and before the extruder moves to the first layer point. Note that you can use "
-                   "placeholder variables for all Slic3r settings as well as [layer_num] and [layer_z].");
+                   "placeholder variables for all PrusaSlicer settings as well as [layer_num] and [layer_z].");
     def->cli = "after-layer-gcode|layer-gcode";
     def->multiline = true;
     def->full_width = true;
@@ -2519,11 +2581,11 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("machine_limits_usage", typeid(EnumWrapper));
     def->location = Printer;
     def->label = L("How to apply limits");
-    def->full_label = L("Purpose of Machine Limits");
+    def->full_label = L("Purpose of machine limits");
     def->category = ConfigItemDef::Category::Printer_MachineLimits;
     def->option_group = ConfigItemDef::OptionGroup::Printer_MachineLimits_General;
     def->gui_type = ConfigItemDef::GUIType::combobox;
-    def->tooltip = L("How to apply the Machine Limits");
+    def->tooltip = L("How to apply the machine limits");
     def->init_fn = init_with(
         MachineLimitsUsage::TimeEstimateOnly,
         {{int(MachineLimitsUsage::EmitToGCode), "emit_to_gcode", L("Emit to G-code")},
@@ -2632,7 +2694,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_MachineLimits_JunctionDeviation;
     def->category = ConfigItemDef::Category::Printer_MachineLimits;
     def->gui_type = ConfigItemDef::GUIType::textfields;
-    def->tooltip = L("Maximum junction deviation (M205 J, only apply if JD > 0 for Marlin Firmware).");
+    def->tooltip = L("Maximum junction deviation (M205 J, only apply if JD > 0 for Marlin firmware).");
     def->units = {L("mm")};
     def->min = 0;
     def->init_fn = init_with(std::vector{ 0., 0. });
@@ -2688,7 +2750,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("max_fan_speed", typeid(int));
     def->location = Filament;
-    def->label = L("Max Fan speed");
+    def->overrides_in = Locations{ MacroSlotOverrides };
+    def->label = L("Max fan speed");
     def->full_label = L("Max fan speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FanControlLimits;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -2702,7 +2765,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("max_layer_height", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Max");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_LayerHeight;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2718,13 +2781,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("max_print_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Max print speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_VolumetricSpeed;
     def->category = ConfigItemDef::Category::Print_Speed;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->tooltip = L("When setting other speed settings to 0 Slic3r will autocalculate the optimal speed "
+    def->tooltip = L("When setting other speed settings to 0 PrusaSlicer will autocalculate the optimal speed "
                    "in order to keep constant extruder pressure. This experimental setting is used "
                    "to set the highest print speed you want to allow.");
     def->units = {L("mm/s")};
@@ -2733,7 +2796,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("max_volumetric_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Max volumetric speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_VolumetricSpeed;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2748,7 +2811,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("max_volumetric_extrusion_rate_slope_positive", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Max volumetric slope positive");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_PressureEqualizer;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2766,7 +2829,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("max_volumetric_extrusion_rate_slope_negative", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Max volumetric slope negative");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_PressureEqualizer;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2783,6 +2846,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("min_fan_speed", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Min fan speed");
     def->full_label = L("Min fan speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_FanControlLimits;
@@ -2797,7 +2861,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("min_layer_height", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Min");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_LayerHeight;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -2811,18 +2875,20 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("min_print_speed", typeid(double));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Min print speed");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingThresholds;
     def->category = ConfigItemDef::Category::Filament_Cooling;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->tooltip = L("Slic3r will not scale speed down below this speed.");
+    def->tooltip = L("PrusaSlicer will not scale speed down below this speed.");
     def->units = {L("mm/s")};
     def->min = 0;
     def->init_fn = init_with(10.);
 
     def = defs.add("min_skirt_length", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Minimal filament extrusion length");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Skirt;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -2851,7 +2917,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("only_retract_when_crossing_perimeters", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Only retract when crossing perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -2863,6 +2929,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("ooze_prevention", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Enable");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_OozePrevention;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2873,7 +2940,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("overhangs", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Detect bridging perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -2913,14 +2980,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_SingleExtruderMMSetup_SingleExtruderMultimaterialParameters;
     def->category = ConfigItemDef::Category::Printer_SingleExtruderMMSetup;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->tooltip = L("Determines purging volume on the wipe tower. This can be modified in Filament Settings "
+    def->tooltip = L("Determines purging volume on the wipe tower. This can be modified in Filament settings "
                      "('filament_purge_multiplier') or overridden using project-specific settings.");
     def->units = {L("mm³")};
     def->init_fn = init_with(140.);
 
     def = defs.add("perimeter_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2933,7 +3000,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("external_perimeter_acceleration", typeid(double));
     def->location = Print;
-    def->overrides_in = { Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("External perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_MainStructureAcceleration;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -2945,7 +3012,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("perimeter_extruder", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Perimeter extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -2958,7 +3025,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("perimeter_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -2977,7 +3044,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("perimeter_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -2991,15 +3058,15 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("perimeters", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Perimeters;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
     def->gui_type = ConfigItemDef::GUIType::spinbox;
     def->tooltip = L("This option sets the minimal number of perimeters to generate for each layer. "
-                   "Note that Slic3r may increase this number automatically when it detects "
+                   "Note that PrusaSlicer may increase this number automatically when it detects "
                    "sloping surfaces which benefit from a higher number of perimeters "
-                   "if the Extra Perimeters option is enabled.");
+                   "if the Extra perimeters option is enabled.");
     def->aliases = { "perimeter_offsets" };
     def->min = 0;
     def->max = 10000;
@@ -3015,7 +3082,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->tooltip = L("If you want to process the output G-code through custom scripts, "
                    "just list their absolute paths here. Separate multiple scripts with a semicolon. "
                    "Scripts will be passed the absolute path to the G-code file as the first argument, "
-                   "and they can access the Slic3r config settings by reading environment variables.");
+                   "and they can access the PrusaSlicer config settings by reading environment variables.");
     def->multiline = true;
     def->full_width = true;
     def->height = 6;
@@ -3023,16 +3090,17 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("pressure_advance", typeid(EnumWrapper));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Pressure advance");
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_PressureAdvance;
     def->category     = ConfigItemDef::Category::Filament_ExtrusionCalibration;
     def->order        = 0;
     def->gui_type     = ConfigItemDef::GUIType::combobox;
     def->tooltip      = L(
-        "Controls how the pressure advance value is emitted into g-code for this filament. "
-             "'Disabled' does not emit any pressure advance command, leaving the printer to use the pressure advance value set in the filament's start g-code (or the firmware default). "
+        "Controls how the pressure advance value is emitted into G-code for this filament. "
+             "'Disabled' does not emit any pressure advance command, leaving the printer to use the pressure advance value set in the filament's start G-code (or the firmware default). "
              "'Enabled' emits the configured pressure advance value. "
-             "'Automatic Calibration' emits the configured pressure advance value and then triggers the firmware's automatic pressure advance calibration."
+             "'Automatic calibration' emits the configured pressure advance value and then triggers the firmware's automatic pressure advance calibration."
     );
     def->init_fn = init_with(
         PressureAdvance::Disabled,
@@ -3040,18 +3108,19 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
          {int(PressureAdvance::Enabled), "enabled", L("Enabled")},
          {int(PressureAdvance::AutomaticCalibration),
           "automatic_calibration",
-          L("Automatic Calibration")}}
+          L("Automatic calibration")}}
     );
 
     def               = defs.add("pressure_advance_value", typeid(double));
     def->location     = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label        = L("Pressure advance");
     def->option_group = ConfigItemDef::OptionGroup::Filament_ExtrusionCalibration_PressureAdvance;
     def->category     = ConfigItemDef::Category::Filament_ExtrusionCalibration;
     def->order = 1;
     def->gui_type     = ConfigItemDef::GUIType::textfield;
     def->tooltip      = L(
-        "Pressure Advance (also called Linear Advance in some firmware) compensates "
+        "Pressure advance (also called linear advance in some firmware) compensates "
              "for nozzle pressure to achieve sharper corners. Proper value helps reduce "
              "bulging on deceleration and under-extrusion on acceleration."
     );
@@ -3085,7 +3154,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("raft_contact_distance", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Raft contact Z distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Raft;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3099,7 +3168,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("raft_expansion", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Raft expansion");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Raft;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3113,7 +3182,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def                             = defs.add("raft_first_layer_density", typeid(Percentage));
     def->location                   = Print;
     def->compatibility_rule         = CompatibilityRule::Average;
-    def->overrides_in               = Locations{Tool, Object};
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label                      = L("First layer density");
     def->option_group               = ConfigItemDef::OptionGroup::Print_BedAdhesion_Raft;
     def->category                   = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3129,7 +3198,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->location                   = Print;
     def->label                      = L("Raft first layer expansion");
     def->compatibility_rule         = CompatibilityRule::Max;
-    def->overrides_in               = Locations{Tool, Object};
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->option_group               = ConfigItemDef::OptionGroup::Print_BedAdhesion_Raft;
     def->category                   = ConfigItemDef::Category::Print_BedAdhesion;
     def->order                      = 4;
@@ -3141,7 +3210,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("raft_layers", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Raft layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Raft;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3155,6 +3224,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("resolution", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Slice resolution");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ResolutionGCodeData;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -3171,7 +3241,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("gcode_resolution", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("G-code resolution");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ResolutionGCodeData;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -3188,7 +3258,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_before_travel", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Minimum travel after retraction");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3200,7 +3270,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_before_wipe", typeid(Percentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Retract amount before wipe");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3213,7 +3283,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_layer_change", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Retract on layer change");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3224,13 +3294,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_length", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Retraction length");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->full_label = L("Retraction Length");
+    def->full_label = L("Retraction length");
     def->tooltip = L("When retraction is triggered, filament is pulled back by the specified amount "
                    "(the length is measured on raw filament, before it enters the extruder).");
     def->units = {L("mm")};
@@ -3238,12 +3308,12 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_length_toolchange", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Length");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_IdleToolRetraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->full_label = L("Retraction Length (Toolchange)");
+    def->full_label = L("Retraction length (toolchange)");
     def->tooltip = L("When retraction is triggered before changing tool, filament is pulled back "
                    "by the specified amount (the length is measured on raw filament, before it enters "
                    "the extruder).");
@@ -3252,7 +3322,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("travel_slope", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Ramping slope angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3266,7 +3336,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("travel_ramping_lift", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Use ramping lift");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3279,7 +3349,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("travel_max_lift", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Maximum ramping lift");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3294,7 +3364,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("travel_lift_before_obstacle", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Steeper ramp before obstacles");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3306,7 +3376,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_lift", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Lift height");
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3320,8 +3390,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_lift_above", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
-    def->label = L("Only lift Above Z");
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
+    def->label = L("Only lift above Z");
     // def->row_group = L("Only lift"); Temporary removed, row_group are not supported in PrintTool
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3335,8 +3405,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_lift_below", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
-    def->label = L("Only lift Below Z");
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
+    def->label = L("Only lift below Z");
     // def->row_group = L("Only lift"); Temporary removed, row_group are not supported in PrintTool
     def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_VerticalLift;
     def->category = ConfigItemDef::Category::Print_MotionDynamics;
@@ -3351,7 +3421,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_restart_extra", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Deretraction extra length");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3364,7 +3434,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_restart_extra_toolchange", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Extra length on restart");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_IdleToolRetraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3376,26 +3446,26 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("retract_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
-    def->label = L("Retraction Speed");
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
+    def->label = L("Retraction speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->full_label = L("Retraction Speed");
+    def->full_label = L("Retraction speed");
     def->tooltip = L("The speed for retractions (it only applies to the extruder motor).");
     def->units = {L("mm/s")};
     def->init_fn = init_with(40.);
 
     def = defs.add("deretract_speed", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
-    def->label = L("Deretraction Speed");
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
+    def->label = L("Deretraction speed");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
     def->order = 2;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->full_label = L("Deretraction Speed");
+    def->full_label = L("Deretraction speed");
     def->tooltip = L("The speed for loading of a filament into extruder after retraction "
                    "(it only applies to the extruder motor). If left to zero, the retraction speed is used.");
     def->units = {L("mm/s")};
@@ -3403,7 +3473,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("seam_gap_distance", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Filament };
+    def->overrides_in = Locations{ Filament, MacroSlotOverrides };
     def->label = L("Seam gap distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3421,7 +3491,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("seam_position", typeid(EnumWrapper));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Seam position");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3438,7 +3508,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("staggered_inner_seams", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Staggered inner seams");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3450,7 +3520,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_placement", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf joint placement");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3459,7 +3529,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->tooltip = L("Where to place scarf joint seam.");
     def->init_fn = init_with(
         ScarfSeamPlacement::nowhere,
-        {// TRN: Drop-down option for 'Scarf joint placement' parameter.
+        {
+         // TRN: Drop-down option for 'Scarf joint placement' parameter.
          {int(ScarfSeamPlacement::nowhere), "nowhere", L("Nowhere")},
          // TRN: Drop-down option for 'Scarf joint placement' parameter.
          {int(ScarfSeamPlacement::countours), "contours", L("Contours")},
@@ -3469,7 +3540,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_only_on_smooth", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf joint only on smooth perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3480,7 +3551,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_start_height", typeid(Percentage));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf start height");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3494,7 +3565,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_entire_loop", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf joint around entire perimeter");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3505,7 +3576,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_length", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf joint length");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3518,7 +3589,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_max_segment_length", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Max scarf joint segment length");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3531,7 +3602,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("scarf_seam_on_inner_perimeters", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Scarf joint on inner perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_Seams;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -3542,6 +3613,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("skirt_distance", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Distance from brim/object");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Skirt;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3554,6 +3626,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("skirt_height", typeid(int));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Skirt height");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Skirt;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3565,6 +3638,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("draft_shield", typeid(EnumWrapper));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Draft shield");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Skirt;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
@@ -3583,13 +3657,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("skirts", typeid(int));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Loops (minimum)");
     def->option_group = ConfigItemDef::OptionGroup::Print_BedAdhesion_Skirt;
     def->category = ConfigItemDef::Category::Print_BedAdhesion;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::spinbox;
-    def->full_label = L("Skirt Loops");
-    def->tooltip = L("Number of loops for the skirt. If the Minimum Extrusion Length option is set, "
+    def->full_label = L("Skirt loops");
+    def->tooltip = L("Number of loops for the skirt. If the Minimum extrusion length option is set, "
                    "the number of loops might be greater than the one configured here. Set this to zero "
                    "to disable skirt completely.");
     def->min = 0;
@@ -3597,6 +3672,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("slowdown_below_layer_time", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Slow down if layer print time is below");
     def->option_group = ConfigItemDef::OptionGroup::Filament_Cooling_CoolingThresholds;
     def->category = ConfigItemDef::Category::Filament_Cooling;
@@ -3611,7 +3687,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("small_perimeter_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Small perimeters");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -3627,7 +3703,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_below_area", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Solid infill threshold area");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -3640,7 +3716,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_extruder", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Solid infill extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -3652,7 +3728,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_every_layers", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Solid infill every");
     def->option_group = ConfigItemDef::OptionGroup::Print_Infill_Advanced;
     def->category = ConfigItemDef::Category::Print_Infill;
@@ -3660,7 +3736,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->gui_type = ConfigItemDef::GUIType::spinbox;
     def->tooltip = L("This feature allows to force a solid layer every given number of layers. "
                    "Zero to disable. You can set this to any value (for example 9999); "
-                   "Slic3r will automatically choose the maximum possible number of layers "
+                   "PrusaSlicer will automatically choose the maximum possible number of layers "
                    "to combine according to nozzle diameter and layer height.");
     def->units = {L("layers")};
     def->min = 0;
@@ -3668,7 +3744,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -3685,7 +3761,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("solid_infill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -3717,9 +3793,9 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("spiral_vase", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Spiral vase");
-    def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_SlicingStrategy;
-    def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
+    def->category = ConfigItemDef::Category::Hidden;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("This feature will raise Z gradually while printing a single-walled object "
@@ -3731,6 +3807,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("standby_temperature_delta", typeid(int));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Temperature variation");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_OozePrevention;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -3761,7 +3838,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
                      "PrusaSlicer will execute the Start G-code after heated chamber was set to its temperature, "
                      "bed reached its target temperature and extruder just started heating.\n\n"
                      "When disabled, PrusaSlicer will NOT emit commands to heat up extruder, bed or chamber, "
-                     "leaving all to Custom Start G-code.");
+                     "leaving all to custom Start G-code.");
     def->init_fn = init_with(true);
 
     def = defs.add("start_gcode", typeid(std::string));
@@ -3818,7 +3895,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->option_group = ConfigItemDef::OptionGroup::Printer_CustomGCode;
     def->order = 8;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    def->label = L("Pause Print G-code");
+    def->label = L("Pause print G-code");
     def->tooltip = L("This G-code will be used as a code for the pause print");
     def->multiline = true;
     def->full_width = true;
@@ -3844,7 +3921,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->category = ConfigItemDef::Category::Printer_General;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
-    def->label = L("Single Extruder Multi Material");
+    def->label = L("Single extruder multi material");
     def->tooltip = L("The printer multiplexes filaments into a single hot end.");
     def->init_fn = init_with(false);
 
@@ -3853,17 +3930,18 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->label = L("Prime all printing extruders");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
-    def->order = 8;
+    def->order        = 10;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("If enabled, all printing extruders will be primed at the front edge of the print bed at the start of the print.");
     def->init_fn = init_with(true);
 
     def = defs.add("wipe_tower_no_sparse_layers", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("No sparse layers (EXPERIMENTAL)");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
-    def->order = 7;
+    def->order        = 9;
     def->gui_type = ConfigItemDef::GUIType::checkbox;
     def->tooltip = L("If enabled, the wipe tower will not be printed on layers with no toolchanges. "
                      "On layers with a toolchange, extruder will travel downward to print the wipe tower. "
@@ -3873,7 +3951,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def               = defs.add("toolchange_ordering", typeid(EnumWrapper));
     def->location     = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in       = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label        = L("Toolchange ordering");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ToolChanges;
     def->category     = ConfigItemDef::Category::Print_MultiMaterial;
@@ -3894,8 +3972,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def               = defs.add("support_material", typeid(EnumWrapper));
     def->location     = Print;
-    def->overrides_in = Locations{Object};
-    def->label        = L("Generate Supports");
+    def->overrides_in = Locations{ Object, MacroOverrides };
+    def->label        = L("Generate supports");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category     = ConfigItemDef::Category::Print_Supports;
     def->order        = 0;
@@ -3903,20 +3981,20 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->tooltip      = L(
         "Enable support material generation.\n"
              "Off - Disables support material generation.\n"
-             "Manual Only - Generates supports inside the \"Support Enforcer\" volumes only.\n"
-             "On - Generates supports automatically based on the overhang threshold value and also inside the \"Support Enforcer\" volumes."
+             "Manual only - Generates supports inside the \"Support enforcer\" volumes only.\n"
+             "On - Generates supports automatically based on the overhang threshold value and also inside the \"Support enforcer\" volumes."
     );
     def->init_fn = init_with(
         SupportMode::EnforcersOnly,
         {{int(SupportMode::None), "none", L("Off")},
-         {int(SupportMode::EnforcersOnly), "enforcers_only", L("Manual Only")},
+         {int(SupportMode::EnforcersOnly), "enforcers_only", L("Manual only")},
          {int(SupportMode::Everywhere), "everywhere", L("On")}}
     );
 
     def = defs.add("support_material_xy_spacing", typeid(FloatOrPercentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("XY separation between an object and its support");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -3934,7 +4012,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_angle", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Pattern angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_PatternDensity;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -3948,7 +4026,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("support_material_buildplate_only", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Support on build plate only");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -3960,14 +4038,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_contact_distance", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Top contact Z distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 2;
     def->gui_type = ConfigItemDef::GUIType::f_enum_open;
     def->tooltip = L("The vertical distance between object and support material interface. "
-                   "Setting this to 0 will also prevent Slic3r from using bridge flow and speed "
+                   "Setting this to 0 will also prevent PrusaSlicer from using bridge flow and speed "
                    "for the first object layer.");
     def->units = {L("mm")};
     def->choices = {
@@ -3980,7 +4058,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_bottom_contact_distance", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Bottom contact Z distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4000,7 +4078,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_enforce_layers", typeid(int));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Enforce support for the first");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4017,7 +4095,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("support_material_extruder", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Support material/raft/skirt extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4031,7 +4109,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Support material");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -4049,7 +4127,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def           = defs.add("support_material_first_layer_density", typeid(Percentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Average;
-    def->overrides_in               = Locations{Tool, Object};
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label                      = L("First layer density");
     def->option_group               = ConfigItemDef::OptionGroup::Print_Supports_SupportGeometry;
     def->category                   = ConfigItemDef::Category::Print_Supports;
@@ -4064,7 +4142,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def           = defs.add("support_material_first_layer_expansion", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in               = Locations{Tool, Object};
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label                      = L("First layer expansion");
     def->option_group               = ConfigItemDef::OptionGroup::Print_Supports_SupportGeometry;
     def->category                   = ConfigItemDef::Category::Print_Supports;
@@ -4078,7 +4156,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_interface_contact_loops", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Interface loops");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4089,7 +4167,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("support_material_interface_extruder", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Support material/raft interface extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4103,7 +4181,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_interface_layers", typeid(int));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Top interface layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4123,7 +4201,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_bottom_interface_layers", typeid(int));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Bottom interface layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4146,7 +4224,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_closing_radius", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Closing radius");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_SupportGeometry;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4161,7 +4239,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_interface_spacing", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Interface pattern spacing");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4175,7 +4253,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_interface_speed", typeid(FloatOrPercentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Support material interface");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -4191,7 +4269,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_pattern", typeid(EnumWrapper));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Pattern");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_PatternDensity;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4208,7 +4286,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_interface_pattern", typeid(EnumWrapper));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Interface pattern");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_InterfaceSeparation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4227,7 +4305,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_spacing", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Pattern spacing");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_PatternDensity;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4241,7 +4319,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_speed", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Support material");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -4255,7 +4333,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_style", typeid(EnumWrapper));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Style");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4274,7 +4352,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_synchronize_layers", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Synchronize with object layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_SupportGeometry;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4289,7 +4367,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_threshold", typeid(int));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Overhang threshold");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_Generation;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4308,7 +4386,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_material_with_sheath", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("With sheath around the support");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_SupportGeometry;
     def->category = ConfigItemDef::Category::Print_Supports;
@@ -4321,13 +4399,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_angle", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Maximum Branch Angle");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Maximum branch angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 0;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Maximum Branch Angle"
+    // TRN PrintSettings: "Organic supports" > "Maximum branch angle"
     def->tooltip = L("The maximum angle of the branches, when the branches have to avoid the model. "
                      "Use a lower angle to make them more vertical and more stable. Use a higher angle to be able to have more reach.");
     def->units = {L("°")};
@@ -4338,13 +4416,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_angle_slow", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Preferred Branch Angle");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Preferred branch angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Preferred Branch Angle"
+    // TRN PrintSettings: "Organic supports" > "Preferred branch angle"
     def->tooltip = L("The preferred angle of the branches, when they do not have to avoid the model. "
                      "Use a lower angle to make them more vertical and more stable. Use a higher angle for branches to merge faster.");
     def->units = {L("°")};
@@ -4355,13 +4433,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_tip_diameter", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Tip Diameter");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Tip diameter");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 6;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Tip Diameter"
+    // TRN PrintSettings: "Organic supports" > "Tip diameter"
     def->tooltip = L("Branch tip diameter for organic supports.");
     def->units = {L("mm")};
     def->min = 0.1f;
@@ -4371,13 +4449,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_branch_diameter", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Branch Diameter");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Branch diameter");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 2;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Branch Diameter"
+    // TRN PrintSettings: "Organic supports" > "Branch diameter"
     def->tooltip = L("The diameter of the thinnest branches of organic support. Thicker branches are more sturdy. "
                      "Branches towards the base will be thicker than this.");
     def->units = {L("mm")};
@@ -4388,13 +4466,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_branch_diameter_angle", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Branch Diameter Angle");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Branch diameter angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 3;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Branch Diameter Angle"
+    // TRN PrintSettings: "Organic supports" > "Branch diameter angle"
     def->tooltip = L("The angle of the branches' diameter as they gradually become thicker towards the bottom. "
                      "An angle of 0 will cause the branches to have uniform thickness over their length. "
                      "A bit of an angle can increase stability of the organic support.");
@@ -4406,13 +4484,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_branch_diameter_double_wall", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Branch Diameter with double walls");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Branch diameter with double walls");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 4;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Branch Diameter"
+    // TRN PrintSettings: "Organic supports" > "Branch diameter"
     def->tooltip = L("Branches with area larger than the area of a circle of this diameter will be printed with double walls for stability. "
                      "Set this value to zero for no double walls.");
     def->units = {L("mm")};
@@ -4426,13 +4504,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_branch_distance", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Branch Distance");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Branch distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 5;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Branch Distance"
+    // TRN PrintSettings: "Organic supports" > "Branch distance"
     def->tooltip = L("How far apart the branches need to be when they touch the model. "
                      "Making this distance small will cause the tree support to touch the model at more points, "
                      "causing better overhang but making support harder to remove.");
@@ -4441,13 +4519,13 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("support_tree_top_rate", typeid(Percentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
-    def->label = L("Branch Density");
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
+    def->label = L("Branch density");
     def->option_group = ConfigItemDef::OptionGroup::Print_Supports_OrganicSupports;
     def->category = ConfigItemDef::Category::Print_Supports;
     def->order = 7;
     def->gui_type = ConfigItemDef::GUIType::textfield;
-    // TRN PrintSettings: "Organic supports" > "Branch Density"
+    // TRN PrintSettings: "Organic supports" > "Branch density"
     def->tooltip = L("Adjusts the density of the support structure used to generate the tips of the branches. "
                      "A higher value results in better overhangs but the supports are harder to remove, "
                      "thus it is recommended to enable top support interfaces instead of a high branch density value "
@@ -4459,6 +4537,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("temperature", typeid(int));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Nozzle other layers");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_NozzleTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
@@ -4475,7 +4554,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("thick_bridges", typeid(bool));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::IgnoreOverrides;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Thick bridges");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -4487,7 +4566,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("thin_walls", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Object, Volume };
+    def->overrides_in = Locations{ Object, Volume, MacroOverrides };
     def->label = L("Detect thin walls");
     def->option_group = ConfigItemDef::OptionGroup::Print_WallsPerimeters_WallsQuality;
     def->category = ConfigItemDef::Category::Print_WallsPerimeters;
@@ -4515,7 +4594,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_infill_extrusion_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Top solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_ExtrusionWidth;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -4533,7 +4612,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_solid_infill_speed", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Top solid infill");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_MainStructure;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -4551,7 +4630,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_solid_layers", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Top solid layers");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_TopBottomShells;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -4564,7 +4643,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("top_solid_min_thickness", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume };
+    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
     def->label = L("Minimum top shell thickness");
     def->option_group = ConfigItemDef::OptionGroup::Print_LayerSurfaces_TopBottomShells;
     def->category = ConfigItemDef::Category::Print_LayersSurfaces;
@@ -4581,7 +4660,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("travel_speed", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Travel");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_Travels;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -4596,7 +4675,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("travel_speed_z", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Z travel");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_Travels;
     def->category = ConfigItemDef::Category::Print_Speed;
@@ -4651,7 +4730,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
                    "instead of linear millimeters. If your firmware doesn't already know "
                    "filament diameter(s), you can put commands like 'M200 D[filament_diameter_0] T0' "
                    "in your start G-code in order to turn volumetric mode on and use the filament "
-                   "diameter associated to the filament selected in Slic3r. This is only supported "
+                   "diameter associated to the filament selected in PrusaSlicer. This is only supported "
                    "in recent Marlin.");
     def->init_fn = init_with(false);
 
@@ -4678,7 +4757,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe", typeid(bool));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Filament };
+    def->overrides_in = Locations{ Tool, Filament, MacroSlotOverrides };
     def->label = L("Wipe while retracting");
     def->option_group = ConfigItemDef::OptionGroup::Print_ExtrusionRetraction_Retraction;
     def->category = ConfigItemDef::Category::Print_ExtrusionRetraction;
@@ -4690,6 +4769,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower", typeid(bool));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Enable");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4721,6 +4801,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower_width", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Width");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4733,6 +4814,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower_brim_width", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Wipe tower brim width");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4745,6 +4827,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower_cone_angle", typeid(double));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Stabilization cone apex angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4760,7 +4843,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("wipe_tower_extra_spacing", typeid(Percentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Wipe tower purge lines spacing");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4775,7 +4858,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("wipe_tower_extra_flow", typeid(Percentage));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Max;
-    def->overrides_in = Locations{Tool};
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Extra flow for purging");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4787,6 +4870,38 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->min = 100.;
     def->max = 300.;
     def->init_fn = init_with(Percentage{100.});
+
+    def               = defs.add("wipe_tower_max_purge_speed", typeid(double));
+    def->location     = Print;
+    def->label        = L("Maximal print speed");
+    def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
+    def->category     = ConfigItemDef::Category::Print_MultiMaterial;
+    def->order        = 7;
+    def->gui_type     = ConfigItemDef::GUIType::textfield;
+    def->tooltip      = L(
+        "Maximal speed for printing the wipe tower, including the purging lines, sparse infill "
+             "and perimeters. Purging starts at about a third of this speed and speeds up, ramming is not limited. "
+             "The filament maximal volumetric speed is still respected. Set zero to disable the limit."
+    );
+    def->units   = {L("mm/s")};
+    def->min     = 0;
+    def->init_fn = init_with(0.);
+
+    def               = defs.add("wipe_tower_deretraction_spread_ratio", typeid(double));
+    def->location     = Print;
+    def->label        = L("De-retraction spread ratio");
+    def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
+    def->category     = ConfigItemDef::Category::Print_MultiMaterial;
+    def->order        = 8;
+    def->gui_type     = ConfigItemDef::GUIType::textfield;
+    def->tooltip      = L(
+        "On printers with multiple tools, the de-retraction after a tool change is done while moving back over "
+             "the start of the purge line instead of standing still, so the material does not form a blob. "
+             "The length of the move is the ramming volume of the new filament converted to purge line length multiplied by this ratio. "
+             "Set zero to de-retract without moving."
+    );
+    def->min     = 0;
+    def->init_fn = init_with(0.125);
 
     def = defs.add("wipe_into_infill", typeid(bool));
     def->location = Volume;
@@ -4811,7 +4926,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def = defs.add("wipe_tower_bridging", typeid(double));
     def->location = Print;
     def->compatibility_rule = CompatibilityRule::Min;
-    def->overrides_in = Locations{ Tool };
+    def->overrides_in = Locations{ Tool, MacroSlotOverrides };
     def->label = L("Maximal bridging distance");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_WipeTower;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4823,6 +4938,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wipe_tower_extruder", typeid(int));
     def->location = Print;
+    def->overrides_in = Locations{ MacroOverrides };
     def->label = L("Wipe tower extruder");
     def->option_group = ConfigItemDef::OptionGroup::Print_MultiMaterial_ExtruderAssignment;
     def->category = ConfigItemDef::Category::Print_MultiMaterial;
@@ -4835,8 +4951,8 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("xy_size_compensation", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
-    def->label = L("XY Size Compensation");
+    def->overrides_in = Locations{ Object, MacroOverrides };
+    def->label = L("XY size compensation");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_DimensionalAccuracy;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
     def->order = 0;
@@ -4861,9 +4977,23 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->units = {L("mm")};
     def->init_fn = init_with(0.);
 
+    def = defs.add("used_filament_compensation", typeid(double));
+    def->location = Printer;
+    def->label = L("Used filament compensation");
+    def->option_group = ConfigItemDef::OptionGroup::Printer_General_SizeClearances;
+    def->category = ConfigItemDef::Category::Hidden;
+    def->order = 2;
+    def->gui_type = ConfigItemDef::GUIType::textfield;
+    def->tooltip = L("Multiplier applied to the filament consumption statistics (length, volume, weight and cost) "
+                   "written into the G-code and shown in the UI. It compensates for printers that extrude "
+                   "slightly more or less than commanded. The extrusion moves themselves are not affected.");
+    def->min = 0.5;
+    def->max = 2;
+    def->init_fn = init_with(1.);
+
     def = defs.add("perimeter_generator", typeid(EnumWrapper));
     def->location = Print;
-    def->overrides_in = Locations{ Object };
+    def->overrides_in = Locations{ Object, MacroOverrides };
     def->label = L("Perimeter generator");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_PerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4882,7 +5012,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wall_transition_length", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Perimeter transition length");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4898,7 +5028,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wall_transition_filter_deviation", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Perimeter transitioning filter margin");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4918,7 +5048,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wall_transition_angle", typeid(double));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Perimeter transitioning threshold angle");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4935,7 +5065,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("wall_distribution_count", typeid(int));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Perimeter distribution count");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4948,7 +5078,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("min_feature_size", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Minimum feature size");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4965,7 +5095,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("min_bead_width", typeid(FloatOrPercentage));
     def->location = Print;
-    def->overrides_in = Locations{ Tool, Object };
+    def->overrides_in = Locations{ Tool, Object, MacroSlotOverrides };
     def->label = L("Minimum perimeter width");
     def->option_group = ConfigItemDef::OptionGroup::Print_PrecisionSlicing_ArachnePerimeterGenerator;
     def->category = ConfigItemDef::Category::Print_PrecisionSlicing;
@@ -4982,13 +5112,14 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("idle_temperature", typeid(std::optional<int>));
     def->location = Filament;
+    def->overrides_in = Locations{ MacroSlotOverrides };
     def->label = L("Idle temperature");
     def->option_group = ConfigItemDef::OptionGroup::Filament_MaterialTemperatures_NozzleTemperature;
     def->category = ConfigItemDef::Category::Filament_MaterialTemperatures;
     def->order = 1;
     def->gui_type = ConfigItemDef::GUIType::spinbox;
     def->tooltip = L("Nozzle temperature when the tool is currently not used in multi-tool setups."
-                     "This is only used when 'Ooze prevention' is active in Print Settings.");
+                     "This is only used when 'Ooze prevention' is active in Print settings.");
     def->units = {L("°C")};
     def->min = 0;
     def->max = max_temp;
@@ -5002,7 +5133,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->label = L("Custom print parameters");
     // FIXME: Translating the tooltip like this will likely not work.
     const std::string custom_parameter_tooltip_templ =
-        L("JSON-encoded string defining extra parameters, which can later be expanded in Custom G-code macro language. "
+        L("JSON-encoded string defining extra parameters, which can later be expanded in custom G-code macro language. "
           "Each of the parameters is prepended by %1% prefix before it is passed into the parser. "
           "For example, defining '{\"my_key\": \"my_value\"}' allows to use '%1%_my_key'.\n\n"
           "The JSON must be single level (no arrays and objects). All value types are allowed, but nulls "
@@ -5042,7 +5173,7 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
 
     def = defs.add("default_tool_print", typeid(std::string));
     def->location = Print;
-    def->label = L("Default Tool Print Preset");
+    def->label = L("Default tool print preset");
     def->category = ConfigItemDef::Category::Hidden;
     def->tooltip = L("Name or ID of tool print preset to use as default when this print preset is selected.");
     def->init_fn = init_with("");

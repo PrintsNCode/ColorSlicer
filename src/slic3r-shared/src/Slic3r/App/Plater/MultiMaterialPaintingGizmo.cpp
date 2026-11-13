@@ -109,11 +109,6 @@ MultiMaterialPaintingGizmo::~MultiMaterialPaintingGizmo()
         .remove_listener<IVirtualExtrudersChangedListener>(this);
 }
 
-float MultiMaterialPaintingGizmo::get_cursor_radius_min() const
-{
-    return MultiMaterialPaintingGizmo::CursorRadiusMin;
-}
-
 float MultiMaterialPaintingGizmo::get_cursor_edge_limit() const
 {
     return this->get_cursor_radius_min() / 5.f;
@@ -309,7 +304,10 @@ PaintingPalette MultiMaterialPaintingGizmo::create_painting_colors() const
     const SelectionId config_container_id = m_project_interactor.selected_config_container_id();
 
     const std::vector<ColorRGB> physical_colors =
-        m_project_interactor.project_settings_interactor().get_colors(config_container_id);
+        m_project_interactor.project_settings_interactor().get_colors(
+            m_project_interactor.selected_project_id(),
+            config_container_id
+        );
 
     PaintingPalette palette;
     for (size_t i = 0; i < physical_colors.size(); ++i) {
@@ -366,11 +364,7 @@ void MultiMaterialPaintingGizmo::on_colors_changed(
     const std::vector<Domain::ColorRGB>& /*colors*/
 )
 {
-    update_painting_dialog_tools();
-
-    for (auto& wrapper : m_triangle_selector_wrappers) {
-        wrapper.update_painted_geometry(m_device);
-    }
+    this->update_painting_tools_and_geometry();
 }
 
 void MultiMaterialPaintingGizmo::on_preset_selection_changed(
@@ -379,26 +373,25 @@ void MultiMaterialPaintingGizmo::on_preset_selection_changed(
     Biz::Preset::PresetItemType type
 )
 {
-    update_painting_dialog_tools();
+    this->update_painting_dialog_tools();
 }
 
 void MultiMaterialPaintingGizmo::
     on_config_container_selection_changed(SelectionId project_id, SelectionId config_container_id)
 {
-    update_painting_dialog_tools();
-
-    // Painted virtual states may have been remapped or cleared.
-    for (TriangleSelectorRenderWrapper& wrapper : m_triangle_selector_wrappers) {
-        wrapper.update_painted_geometry(m_device);
-    }
+    this->update_painting_tools_and_geometry();
 }
 
 void MultiMaterialPaintingGizmo::
     on_virtual_extruders_changed(SelectionId project_id, SelectionId config_container_id)
 {
-    update_painting_dialog_tools();
+    this->update_painting_tools_and_geometry();
+}
 
-    // Painted virtual states may have been remapped or cleared.
+void MultiMaterialPaintingGizmo::update_painting_tools_and_geometry()
+{
+    this->update_painting_dialog_tools();
+
     for (TriangleSelectorRenderWrapper& wrapper : m_triangle_selector_wrappers) {
         wrapper.update_painted_geometry(m_device);
     }
