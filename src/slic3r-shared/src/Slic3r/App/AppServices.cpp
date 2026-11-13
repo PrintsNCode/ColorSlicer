@@ -6,7 +6,9 @@
 #include "Slic3r/App/AppConfig.hpp"
 #include "Slic3r/App/AppConfigInteractor.hpp"
 #include "Slic3r/App/PresetUpdater/PresetUpdaterController.hpp"
+#include "Slic3r/App/Navigator.hpp"
 #include "Slic3r/App/Theme.hpp"
+#include "Slic3r/App/Mouse3D/Mouse3DController.hpp"
 
 namespace Slic3r::App {
 
@@ -28,6 +30,11 @@ void AppServices::set_pop_notification_center(
 void AppServices::set_dialog_manager(std::unique_ptr<IDialogManager>&& manager)
 {
     m_dialog_manager = std::move(manager);
+}
+
+void AppServices::set_navigator(std::unique_ptr<Navigator>&& navigator)
+{
+    m_navigator = std::move(navigator);
 }
 
 void AppServices::set_file_explorer_handler(
@@ -57,6 +64,11 @@ void AppServices::set_theme(std::unique_ptr<Theme>&& theme)
     m_theme = std::move(theme);
 }
 
+void AppServices::set_mouse_3d_controller(std::unique_ptr<Mouse3D::Mouse3DController>&& controller)
+{
+    m_mouse_3d_controller = std::move(controller);
+}
+
 PopNotification::PopNotificationCenter& AppServices::pop_notification_center() const
 {
     ASSERT(m_pop_notification_center != nullptr);
@@ -67,6 +79,12 @@ IDialogManager& AppServices::dialog_manager() const
 {
     ASSERT(m_dialog_manager != nullptr);
     return *m_dialog_manager;
+}
+
+Navigator& AppServices::navigator() const
+{
+    ASSERT(m_navigator != nullptr);
+    return *m_navigator;
 }
 
 Platform::IFileExplorerHandler& AppServices::file_explorer_handler() const
@@ -102,6 +120,17 @@ Theme& AppServices::theme() const
 {
     ASSERT(m_theme);
     return *m_theme;
+}
+
+Mouse3D::Mouse3DController& AppServices::mouse_3d_controller() const
+{
+    ASSERT(m_mouse_3d_controller != nullptr);
+    return *m_mouse_3d_controller;
+}
+
+bool AppServices::has_mouse_3d_controller() const
+{
+    return m_mouse_3d_controller != nullptr;
 }
 
 } // namespace Slic3r::App

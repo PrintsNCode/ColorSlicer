@@ -182,6 +182,18 @@ VirtualExtruders normalize_virtual_extruders(const VirtualExtruders& raw_virtual
             }
         }
 
+        VirtualExtruderComponents& components = normalized_virtual_extruder.components;
+        int remaining_percent                 = 100;
+        for (VirtualExtruderComponent& component :
+             components | std::views::take(components.size() - 1))
+        {
+            const int percent = static_cast<int>(std::round(component.ratio * 100.));
+            component.ratio   = percent / 100.;
+            remaining_percent -= percent;
+        }
+
+        components.back().ratio = remaining_percent / 100.;
+
         normalized_virtual_extruders.push_back(std::move(normalized_virtual_extruder));
     }
 
@@ -698,6 +710,43 @@ void remap_virtual_extruders_on_import(
         source_physical_count,
         target_physical_count
     );
+}
+
+std::vector<std::string> mixed_filament_types(
+    const VirtualExtruder& virtual_extruder,
+    const std::vector<std::string>& filament_types_0based
+)
+{
+    std::vector<unsigned int> extruder_ids_1based;
+    if (virtual_extruder.gradient.has_value()) {
+        for (const VirtualExtruderGradientStop& stop : virtual_extruder.gradient->stops) {
+            extruder_ids_1based.push_back(stop.extruder_id);
+        }
+    } else {
+        for (const VirtualExtruderComponent& component : virtual_extruder.components) {
+            extruder_ids_1based.push_back(component.extruder_id);
+        }
+    }
+
+    std::vector<std::string> filament_types;
+    for (const unsigned int extruder_id_1based : extruder_ids_1based) {
+        if (extruder_id_1based == 0 || extruder_id_1based > filament_types_0based.size()) {
+            continue;
+        }
+
+        const std::string& filament_type = filament_types_0based[extruder_id_1based - 1];
+        if (!filament_type.empty()
+            && std::ranges::find(filament_types, filament_type) == filament_types.end())
+        {
+            filament_types.push_back(filament_type);
+        }
+    }
+
+    if (filament_types.size() < 2) {
+        return {};
+    }
+
+    return filament_types;
 }
 
 } // namespace Slic3r::Biz::Algorithms::VirtualExtruder

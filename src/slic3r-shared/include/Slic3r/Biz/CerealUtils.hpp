@@ -283,9 +283,26 @@ void serialize(Archive& archive, Slic3r::Domain::Preset::EvaluatedToolPrintPrese
 }
 
 template <class Archive>
+void serialize(Archive& archive, Slic3r::Domain::Preset::MatDbMatchRule& match_rule)
+{
+    archive(
+        match_rule.uuid,
+        match_rule.brand_slug,
+        match_rule.slug,
+        match_rule.name,
+        match_rule.klass,
+        match_rule.type,
+        match_rule.abbreviation,
+        match_rule.required_tags,
+        match_rule.optional_tags,
+        match_rule.exclude_tags
+    );
+}
+
+template <class Archive>
 void serialize(Archive& archive, Slic3r::Domain::Preset::EvaluatedMaterialPreset& preset)
 {
-    archive(preset.preset);
+    archive(preset.preset, preset.mat_db_match_rule);
 }
 
 template <class Archive>
@@ -457,9 +474,15 @@ void serialize(Archive& archive, Slic3r::Domain::Preset::HwPrinterConfigTemplate
 }
 
 template <class Archive>
+void serialize(Archive& archive, Slic3r::Domain::Preset::PresetFeatures& features)
+{
+    archive(features.printer, features.print, features.toolprint, features.material);
+}
+
+template <class Archive>
 void serialize(Archive& archive, Slic3r::Domain::Preset::VendorFeatures& features)
 {
-    archive(features.printer, features.tool, features.feeder, features.sheet);
+    archive(features.printer, features.tool, features.feeder, features.sheet, features.presets);
 }
 
 template <class Archive>
@@ -469,9 +492,27 @@ void serialize(Archive& archive, Slic3r::Domain::Preset::PrinterFamilyInfo& fami
 }
 
 template <class Archive>
+void serialize(Archive& archive, Slic3r::Domain::Preset::ModelIdMapping& model)
+{
+    archive(model.base_model, model.model);
+}
+
+template <class Archive>
+void serialize(Archive& archive, Slic3r::Domain::Preset::ComponentIdMapping& ids)
+{
+    archive(ids.id, ids.model);
+}
+
+template <class Archive>
+void serialize(Archive& archive, Slic3r::Domain::Preset::DeprecatedIdMapping& deprecated_ids)
+{
+    archive(deprecated_ids.printer, deprecated_ids.tool, deprecated_ids.feeder, deprecated_ids.sheet);
+}
+
+template <class Archive>
 void serialize(Archive& archive, Slic3r::Domain::Preset::VendorInfo& info)
 {
-    archive(info.id, info.repo_id, info.name, info.version, info.features, info.printer_families);
+    archive(info.id, info.repo_id, info.name, info.version, info.features, info.printer_families, info.deprecated_ids);
 }
 
 template <class Archive>

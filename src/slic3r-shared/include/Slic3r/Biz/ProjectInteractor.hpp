@@ -5,6 +5,7 @@
 #include "Slic3r/Biz/FDMResultCache.hpp"
 #include "Slic3r/Biz/GeneratedSupportPointsCache.hpp"
 #include "Slic3r/Biz/IMdb.hpp"
+#include "Slic3r/Biz/PrintModeInteractor.hpp"
 #include "Slic3r/Biz/ProjectSettingsInteractor.hpp"
 #include "Slic3r/Biz/VirtualExtruderInteractor.hpp"
 #include "Slic3r/Biz/Preset/IPresetChangedListener.hpp"
@@ -28,9 +29,12 @@
 #include "Slic3r/Biz/RemovableDrive/RemovableDriveService.hpp"
 #include "Slic3r/Biz/FileDownloader/FileDownloaderInteractor.hpp"
 #include "Slic3r/Biz/PhysicalPrinter/PhysicalPrinterInteractor.hpp"
+#include "Slic3r/Biz/ExportDestination/ExportDestinationInteractor.hpp"
 #include "Slic3r/Biz/IUndoProvider.hpp"
 #include "Slic3r/Biz/Connect/ConnectMessageHandler.hpp"
 #include "Slic3r/Biz/BackupStore.hpp"
+#include "Slic3r/Biz/MatDb/MatDbInteractor.hpp"
+#include "Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp"
 
 namespace Slic3r::Domain {
 class Model;
@@ -42,6 +46,7 @@ namespace Slic3r::Biz {
 
 class ISelectedProjectChangedListener;
 class ISelectedConfigContainerChangedListener;
+class IConfigContainerListChangedListener;
 class IProjectsChangedListener;
 class IMessageDialogProvider;
 
@@ -66,6 +71,11 @@ class NoopUndoProvider : public IUndoProvider
     {
         return false;
     }
+
+    bool is_restoring_snapshot() const
+    {
+        return false;
+    }
 };
 
 /**
@@ -86,26 +96,34 @@ class ProjectInteractor final :
     public UserAccount::IUserAccountListener,
     public Platform::IAppInstanceMessageContentListener,
     public FileDownloader::IFileDownloaderListener,
-    public WithListeners<ISelectedProjectChangedListener, IProjectsChangedListener, ISelectedConfigContainerChangedListener>
+    public WithListeners<
+        ISelectedProjectChangedListener,
+        IProjectsChangedListener,
+        ISelectedConfigContainerChangedListener,
+        IConfigContainerListChangedListener>
 {
 public:
     ProjectInteractor(Domain::Workbench& workbench, Platform::IMainThreadDispatcher& dispatcher, Biz::Slicing::IThumbnailImageGenerator& thumbnail_image_generator) :
         m_workbench(workbench),
         m_scene_interactor(workbench),
         m_backup_store(*this),
-        m_preset_interactor(workbench, m_scene_interactor, m_backup_store),
+        m_slicing_interactor(dispatcher, thumbnail_image_generator),
+        m_preset_interactor(workbench, m_scene_interactor, m_backup_store, m_slicing_interactor),
+        m_print_mode_interactor(*this),
         m_arrange_interactor(m_scene_interactor, workbench),
         m_clipboard_interactor(m_scene_interactor, m_arrange_interactor, workbench),
-        m_project_settings_interactor(workbench, m_null_mdb),
+        m_matdb_interactor(m_workbench, *this),
+        m_project_settings_interactor(workbench, m_matdb_interactor),
         m_virtual_extruder_interactor(workbench),
-        m_slicing_interactor(dispatcher, thumbnail_image_generator),
         m_result_export_interactor(dispatcher),
         m_user_account_interactor(dispatcher),
         m_preset_updater_interactor(dispatcher, m_user_account_interactor),
         m_removable_drive_service(dispatcher),
         m_file_downloader_interactor(dispatcher),
-        m_physical_printer_interactor(dispatcher, m_preset_interactor, m_user_account_interactor, m_removable_drive_service),
-        m_connect_message_handler(dispatcher, m_preset_interactor, m_user_account_interactor, m_physical_printer_interactor),
+        m_file_opening_interactor(*this),
+        m_physical_printer_interactor(workbench, *this, dispatcher, m_preset_interactor, m_user_account_interactor),
+        m_export_destination_interactor(m_physical_printer_interactor, m_user_account_interactor, m_removable_drive_service),
+        m_connect_message_handler(dispatcher, m_preset_interactor, m_physical_printer_interactor.connect_printer_service(), m_physical_printer_interactor),
         m_project_list(*this),
         m_undo_provider(std::make_unique<NoopUndoProvider>())
     {
@@ -122,7 +140,10 @@ public:
         m_preset_interactor.add_listener<Preset::IPresetChangedListener>(&m_scene_interactor);
         m_preset_interactor.add_listener<Preset::IPresetChangedListener>(&m_project_settings_interactor);
         m_preset_interactor.add_listener<Preset::IPresetChangedListener>(&m_virtual_extruder_interactor);
+        m_preset_interactor.add_listener<Preset::IPresetChangedListener>(&m_print_mode_interactor);
+        m_slicing_interactor.add_listener<Slicing::IBackgroundProcessStateListener>(&m_print_mode_interactor);
         m_project_settings_interactor.add_listener<IColorsChangedListener>(this);
+        m_project_settings_interactor.add_listener<ISlicingInputChangedListener>(this);
         m_virtual_extruder_interactor.add_listener<IVirtualExtrudersChangedListener>(this);
         m_slicing_interactor.set_listener<Slicing::IFDMResultListener>(&m_fdm_result_cache);
         m_slicing_interactor.set_listener<Slicing::ISLAResultListener>(&m_sla_result_cache);
@@ -132,8 +153,9 @@ public:
         );
         m_slicing_interactor.add_listener<Slicing::IStatusListener>(&m_status_cache);
         m_slicing_interactor.add_listener<Slicing::IWipeTowerGeometryListener>(&m_scene_interactor);
-        m_slicing_interactor.add_listener<Slicing::IExtruderCandidatesListener>(&m_scene_interactor);
         m_user_account_interactor.add_listener<UserAccount::IUserAccountListener>(this);
+        m_user_account_interactor.add_listener<UserAccount::IUserAccountListener>(&m_physical_printer_interactor.connect_printer_service());
+        connect_favorite_material_service().add_listener<ConnectPrinter::IConnectFavoriteMaterialsListener>(&m_matdb_interactor);
         Platform::PlatformServices::instance()
             .app_instance_message_handler()
             .add_listener<Platform::IAppInstanceMessageContentListener>(this);
@@ -141,8 +163,12 @@ public:
         add_listener<ISelectedConfigContainerChangedListener>(
             &m_preset_interactor.object_settings_interactor()
         );
+        wire_object_list_interactor();
         add_listener<ISelectedConfigContainerChangedListener>(&m_physical_printer_interactor);
-        m_removable_drive_service.add_status_listener(&m_physical_printer_interactor);
+        add_listener<ISelectedConfigContainerChangedListener>(&m_export_destination_interactor);
+        m_removable_drive_service.add_status_listener(&m_export_destination_interactor);
+        m_user_account_interactor.add_listener<UserAccount::IUserAccountListener>(&m_export_destination_interactor);
+        m_physical_printer_interactor.add_listener<PhysicalPrinter::IPhysicalPrinterChangedListener>(&m_export_destination_interactor);
     }
 
     const Domain::Workbench& workbench() const
@@ -181,12 +207,17 @@ public:
      */
     /**
      * @brief Load project from the file
+     * @note Files opened by the user go through file_opening_interactor().open().
      * @param empty_project_action Replace takes over the selected project instead of adding a new
      * one, when that project is still empty once the file is loaded.
+     * @param temporary_file The project is loaded without a path to the file and stays unmodified.
+     * @param on_done Called on the main thread after the project is loaded or failed.
      */
     void load_project(
         const boost::filesystem::path& file_path,
-        EmptyProjectAction empty_project_action = EmptyProjectAction::Keep
+        EmptyProjectAction empty_project_action = EmptyProjectAction::Keep,
+        bool temporary_file                     = false,
+        std::function<void()> on_done           = {}
     );
     /**
      * @brief Load projects from files
@@ -350,6 +381,17 @@ public:
         return m_slicing_interactor;
     }
 
+    const Slicing::SlicingInteractor& slicing_interactor() const
+    {
+        return m_slicing_interactor;
+    }
+
+
+    PrintModeInteractor& print_mode_interactor()
+    {
+        return m_print_mode_interactor;
+    }
+
     FDMResultCache& fdm_result_cache()
     {
         return m_fdm_result_cache;
@@ -385,6 +427,11 @@ public:
         return m_status_cache;
     }
 
+    FileOpen::FileOpeningInteractor& file_opening_interactor()
+    {
+        return m_file_opening_interactor;
+    }
+
     Biz::ArrangeInteractor& arrange_interactor()
     {
         return m_arrange_interactor;
@@ -393,6 +440,11 @@ public:
     Biz::ClipboardInteractor& clipboard_interactor()
     {
         return m_clipboard_interactor;
+    }
+
+    MatDb::MatDbInteractor& matdb_interactor()
+    {
+        return m_matdb_interactor;
     }
 
     ProjectSettingsInteractor& project_settings_interactor()
@@ -451,8 +503,13 @@ public:
      * @brief Creates PhysicalPrinter::PhysicalPrinterConfig and PrintHostData and passes it to ResultExportInteractor to start export.
      * PrintHostData copies gcode data from m_fdm_result_cache.
      * PhysicalPrinter::PhysicalPrinterConfig origin is yet to be decided.
+     * @param job_name Name stored inside of formats that have one (SL1), the stem of dest_path when empty.
      */
-    void do_result_export(const Domain::SlicingId id, const boost::filesystem::path& dest_path);
+    void do_result_export(
+        const Domain::SlicingId id,
+        const boost::filesystem::path& dest_path,
+        const std::string& job_name = {}
+    );
 
     /**
      * @brief Creates PrintHostData and passes it with the given destination to ResultExportInteractor to start upload.
@@ -488,11 +545,6 @@ public:
             "STORE_READ",
             {}
         );
-
-        if (!is_refresh)
-        {
-            m_physical_printer_interactor.select_connect_upload_if_default();
-        }
     }
 
     /**
@@ -510,14 +562,18 @@ public:
         );
     }
 
-    void load_models_to_project(std::vector<boost::filesystem::path> paths);
+    /**
+     * @note Files opened by the user go through file_opening_interactor().open().
+     * @param temporary_sources Imported objects keep no source path, reload from disk is disabled.
+     */
+    void load_models_to_project(std::vector<boost::filesystem::path> paths, bool temporary_sources = false);
 
     /**
      * @brief Callback from AppInstanceMessageHandler.
      */
     void on_open_models(const std::vector<boost::filesystem::path>& paths) override
     {
-        load_models_to_project(paths);
+        m_file_opening_interactor.open(paths, {.as_geometry = true});
     }
 
     /**
@@ -530,9 +586,15 @@ public:
     /**
      * @brief Callback from FileDownloader.
      */
-    void on_model_downloaded(const std::vector<boost::filesystem::path>& paths, bool in_new_project) override;
+    void on_files_downloaded(
+        const std::vector<boost::filesystem::path>& paths,
+        FileDownloader::FileDownloaderTagPtr tag
+    ) override;
 
-    void open_downloaded_file(const boost::filesystem::path& path, bool in_new_project);
+    FileDownloader::FileDownloaderInteractor& file_downloader_interactor()
+    {
+        return m_file_downloader_interactor;
+    }
 
     /**
      * @brief Callback from AppInstanceMessageHandler.
@@ -634,12 +696,33 @@ public:
         return m_physical_printer_interactor;
     }
 
+    ExportDestination::ExportDestinationInteractor& export_destination_interactor()
+    {
+        return m_export_destination_interactor;
+    }
+
     Connect::ConnectMessageHandler& connect_message_handler()
     {
         return m_connect_message_handler;
     }
 
+    ConnectPrinter::ConnectPrinterService& connect_printer_service()
+    {
+        return m_physical_printer_interactor.connect_printer_service();
+    }
+
+    ConnectPrinter::ConnectFavoriteMaterialService& connect_favorite_material_service()
+    {
+        return connect_printer_service().favorite_material_service();
+    }
+
 private:
+    /**
+     * @brief Wires SceneInteractor's owned ObjectListInteractor to this ProjectInteractor (and
+     * transitively to preset_interactor()/status_cache()).
+     */
+    void wire_object_list_interactor();
+
     void on_slicing_input_changed(const Domain::BedRef& bed_instance) override;
     void on_slicing_input_removed(const Domain::BedRef& bed_instance) override;
     void on_colors_changed(
@@ -672,7 +755,7 @@ private:
     );
 
     /** The part of load_models_to_project() that adds the files to the selected project. */
-    void import_models_into_selected_project(std::vector<boost::filesystem::path> paths);
+    void import_models_into_selected_project(std::vector<boost::filesystem::path> paths, bool temporary_sources);
 
     void do_result_export_inner(
         const Domain::SlicingId id,
@@ -695,13 +778,14 @@ private:
 
     Scene::SceneInteractor m_scene_interactor;
     BackupStore m_backup_store;
+    Slicing::SlicingInteractor m_slicing_interactor;
     Preset::PresetInteractor m_preset_interactor;
+    PrintModeInteractor m_print_mode_interactor;
     ArrangeInteractor m_arrange_interactor;
     ClipboardInteractor m_clipboard_interactor;
-    NullMdb m_null_mdb;
+    MatDb::MatDbInteractor m_matdb_interactor;
     ProjectSettingsInteractor m_project_settings_interactor;
     VirtualExtruderInteractor m_virtual_extruder_interactor;
-    Slicing::SlicingInteractor m_slicing_interactor;
     FDMResultCache m_fdm_result_cache;
     SLAResultCache m_sla_result_cache;
     SLAObjectCache m_sla_object_cache;
@@ -712,7 +796,9 @@ private:
     PresetUpdater::PresetUpdaterInteractor m_preset_updater_interactor;
     RemovableDrive::RemovableDriveService m_removable_drive_service;
     FileDownloader::FileDownloaderInteractor m_file_downloader_interactor;
+    FileOpen::FileOpeningInteractor m_file_opening_interactor;
     PhysicalPrinter::PhysicalPrinterInteractor m_physical_printer_interactor;
+    ExportDestination::ExportDestinationInteractor m_export_destination_interactor;
     Connect::ConnectMessageHandler m_connect_message_handler;
 
     ObservableProjectList m_project_list;

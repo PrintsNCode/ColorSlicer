@@ -2,10 +2,13 @@
 
 #include "Slic3r/Biz/Platform/PlatformServices.hpp"
 #include "Slic3r/Biz/Lua/LuaException.hpp"
+#include "Slic3r/Biz/Expr/Parser.hpp"
+#include "Slic3r/Log.hpp"
 
 #include <fmt/format.h>
+#include <algorithm>
+#include <cctype>
 #include <ranges>
-#include <spdlog/spdlog.h>
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
 
@@ -15,7 +18,8 @@ namespace fs = boost::filesystem;
 
 namespace {
 const std::unordered_map<PluginType, std::string> PLUGIN_TYPE_NAMES = {
-    {PluginType::ProjectPlugin, "project.plugin"}
+    {PluginType::ProjectPlugin, "project.plugin"},
+    {PluginType::PrintMode, "print.print_mode"}
 };
 }
 
@@ -28,14 +32,6 @@ tl::expected<PluginType, std::string> parse_plugin_type(std::string_view s)
     }
     return it.base()->first;
 }
-
-std::string to_string(PluginType type)
-{
-    const auto it = PLUGIN_TYPE_NAMES.find(type);
-    ASSERT(it != PLUGIN_TYPE_NAMES.end());
-    return it->second;
-}
-
 
 bool is_path_in_sandbox(
     const boost::filesystem::path& sandbox_path,
@@ -70,6 +66,22 @@ bool is_path_in_sandbox(
     return true;
 }
 
+bool is_safe_path_component(std::string_view token)
+{
+    constexpr std::size_t max_len = 128;
+    if (token.empty() || token.size() > max_len) {
+        return false;
+    }
+    const auto is_alnum = [](unsigned char c) { return std::isalnum(c) != 0; };
+    // Windows strips a trailing dot, so "foo." and "foo" would share one folder.
+    if (!is_alnum(token.front()) || token.back() == '.') {
+        return false;
+    }
+    return std::ranges::all_of(token, [&](unsigned char c) {
+        return is_alnum(c) || c == '.' || c == '_' || c == '-' || c == '+';
+    });
+}
+
 struct SafeFileResolver
 {
     fs::path plugin_path;
@@ -97,7 +109,7 @@ private:
 };
 
 Plugin::ParseResult
-Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std::string& path)
+Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& bundle_id, const std::string& path)
 {
     auto& state = lua.state();
     if (!state["info"].is<sol::table>()) {
@@ -106,17 +118,13 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
 
     sol::table info = state["info"];
     PluginMeta meta;
-    meta.id = id_prefix + info["id"].get<std::string>();
+    meta.id = bundle_id + "." + info["id"].get<std::string>();
     auto type_result = parse_plugin_type(info["type"].get<std::string>());
     if (!type_result.has_value()) {
         return tl::unexpected{type_result.error()};
     }
     meta.type = type_result.value();
     meta.title = info.get<std::optional<std::string>>("title");
-
-    if (meta.type != PluginType::ProjectPlugin) {
-        return tl::unexpected{fmt::format("Unsupported plugin type '{}'", to_string(meta.type))};
-    }
 
     if (info["menu"].valid()) {
         std::vector<std::string> menu_items;
@@ -134,22 +142,43 @@ Plugin::parse(Biz::Lua::LuaEngine& lua, const std::string& id_prefix, const std:
             auto name = p.get<std::string>("name");
             auto label = p.get_or<std::string>("label", name);
             auto type = p.get<std::string>("type");
-            auto value = p.get<PluginParamValue>("default");
-            meta.params.emplace_back(name, label, type, value);
+            std::optional<PluginParamValue> value;
+            if (p["default"].valid()) {
+                value = p.get<PluginParamValue>("default");
+            }
+            std::vector<std::string> allowed_values;
+            if (auto in_vals = p["allowed_values"]; in_vals.valid()) {
+                allowed_values = in_vals.get<std::vector<std::string>>();
+            }
+            meta.params.emplace_back(name, label, type, value, allowed_values);
         });
+    }
+
+    if (info["condition"].valid()) {
+        if (!info["condition"].is<std::string>()) {
+            return tl::unexpected{"The condition must be a string"};
+        }
+        try {
+            meta.condition = Biz::Expr::Parser().parse(info["condition"].get<std::string>());
+        } catch (const Biz::Expr::ParseError& e) {
+            return tl::unexpected{fmt::format("Invalid condition: {}", e.what())};
+        }
     }
 
     if (!state["execute"].is<sol::function>()) {
         return tl::unexpected{"Missing execute() function"};
     }
 
-    return Plugin{path, meta};
+    return Plugin{path, bundle_id, meta};
 }
 
-Plugin::Plugin(std::string path, PluginMeta meta) : m_path(std::move(path)), m_meta(std::move(meta))
+Plugin::Plugin(std::string path, std::string bundle_id, PluginMeta meta) :
+    m_path(std::move(path)),
+    m_bundle_id(std::move(bundle_id)),
+    m_meta(std::move(meta))
 {}
 
-void Plugin::execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params) const
+sol::object Plugin::execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params) const
 {
     SafeFileResolver resolver{m_path};
     lua.set_path_resolver(resolver);
@@ -167,14 +196,18 @@ void Plugin::execute(Biz::Lua::LuaEngine& lua, const PluginParamValueMap& params
         opts[name] = value;
     }
     sol::protected_function fn = lua.state()["execute"];
-    if (const sol::protected_function_result ret = fn(opts); !ret.valid()) {
-        const sol::error err = ret;
-        SPDLOG_ERROR("Error executing script {}: {}", m_path, err.what());
-    }
-
+    sol::object result;
+    const sol::protected_function_result ret = fn(opts);
     lua.set_path_resolver(nullptr);
+    if (!ret.valid()) {
+        const sol::error err = ret;
+        throw Biz::Lua::LuaException{err.what(), m_path};
+    }
+    result = ret;
 
     Biz::Platform::PlatformServices::instance().render_request_handler().request_render();
+
+    return result;
 }
 
 }

@@ -25,6 +25,8 @@ enum class FDMConfigLocation
     Project,
     Object,
     Volume,
+    MacroOverrides,
+    MacroSlotOverrides
 };
 
 enum class SLAConfigLocation
@@ -34,6 +36,8 @@ enum class SLAConfigLocation
     Material,
     Print,
     Object,
+    Project,
+    MacroOverrides
 };
 
 enum class CompatibilityRule
@@ -65,6 +69,9 @@ struct AppConfigLocation
 using ConfigLocation = std::variant<FDMConfigLocation, SLAConfigLocation, PhysicalPrinterLocation, AppConfigLocation>;
 
 std::string get_location_name(const ConfigLocation& location);
+
+struct ConfigItemDef;
+bool is_defined_per_material_slot(const ConfigItemDef& def);
 
 // Static definition of a single config item. Contains all info about what the item is,
 // as well as rules for diplaying it in the UI. All information about the item is here,
@@ -174,6 +181,7 @@ struct ConfigItemDef
 
         AppConfig_General  = 600,
         AppConfig_Services = 601,
+        AppConfig_Mouse3D  = 602,
 
         PhysicalPrinter_General = 700,
     };
@@ -261,10 +269,11 @@ struct ConfigItemDef
         ///////////////// Filament //////////////////
 
         Filament_MaterialTemperatures_MaterialProperty      = 5000,
-        Filament_MaterialTemperatures_BedChamberTemperature = 5001,
-        Filament_MaterialTemperatures_NozzleTemperature     = 5002,
+        Filament_MaterialTemperatures_NozzleTemperature     = 5001,
+        Filament_MaterialTemperatures_BedChamberTemperature = 5002,
         Filament_MaterialTemperatures_Corrections           = 5003,
         Filament_MaterialTemperatures_Exposure              = 5004,
+        Filament_MaterialTemperatures_CostWeight            = 5005,
 
         Filament_ExtrusionCalibration_ExtrusionCalibration = 5100,
         Filament_ExtrusionCalibration_Compensation         = 5101,
@@ -328,6 +337,10 @@ struct ConfigItemDef
 
         AppConfig_Services_General       = 15100,
         AppConfig_Services_ServicesSetup = 15101,
+
+        AppConfig_Mouse3D_Speed    = 15200,
+        AppConfig_Mouse3D_Deadzone = 15201,
+        AppConfig_Mouse3D_Options  = 15202,
     };
 
     static std::string translate_category(Category category, const PrinterTechnology pt);

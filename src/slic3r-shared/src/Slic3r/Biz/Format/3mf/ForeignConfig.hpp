@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include <miniz.h>
+#include "Slic3r/Biz/Algorithms/ZipArchive.hpp"
 
 #include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
 
@@ -26,7 +26,7 @@ struct BambuColors
     bool has_model_settings = false;
 };
 
-BambuColors read_bambu_colors(mz_zip_archive& archive);
+BambuColors read_bambu_colors(Algorithms::ZipArchive& archive);
 
 /// Parts of read_bambu_colors() working on text, exposed for tests.
 std::vector<ColorImport::Rgba> parse_filament_colors(const std::string& project_settings_json);

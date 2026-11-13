@@ -49,12 +49,18 @@ struct ImportToSceneResult {
     bool geometry_only_3mf = false;
 };
 
+struct ImportOptions {
+    bool temporary_sources = false; ///< Imported objects keep no source path, reload from disk is disabled.
+    /// "#RRGGBB" colors of the extruders of the project the files are added to.
+    /// Colors of a 3MF or OBJ written by another application are mapped to the nearest of them.
+    std::vector<std::string> extruder_colors;
+};
+
 /**
  * Load meshes (e.g., STL, OBJ) and complex models (e.g., 3MF) from multiple source files
  * and insert them into the scene graph.
  *
- * @param extruder_colors "#RRGGBB" colors of the extruders of the project the files are added to.
- * Colors of a 3MF written by another application are mapped to the nearest of them.
+ * options.extruder_colors: colors of the project's extruders; colors of foreign files map to the nearest.
  */
 ImportToSceneResult import_files_and_add_to_scene(
     const std::vector<boost::filesystem::path>& input_file_paths,
@@ -62,7 +68,7 @@ ImportToSceneResult import_files_and_add_to_scene(
     Scene::SceneInteractor& scene_interactor,
     const Domain::Vec2d& bed_center,
     IMessageDialogProvider* dialog_provider,
-    const std::vector<std::string>& extruder_colors = {}
+    const ImportOptions& options = {}
 );
 
 /**
@@ -125,6 +131,14 @@ tl::expected<Domain::Model, std::string>
 read_model_from_file(const std::string& input_file, IMessageDialogProvider* dialog_provider);
 
 /**
+ * @brief Scales the mesh to millimeters the same way as during the original import of its source.
+ */
+void apply_unit_conversion_from_source(
+    Domain::TriangleMesh& mesh,
+    const Domain::ModelVolume::Source& source
+);
+
+/**
  * Returns all file extensions that the slicer can import (projects and models).
  *
  * Extensions are lowercase and dot-prefixed (e.g. ".stl", ".3mf").
@@ -154,5 +168,7 @@ bool is_project_file(const std::string& input_file);
  * @return True if the file can be loaded by the slicer, false otherwise.
  */
 bool is_supported_file(const std::string& input_file);
+
+bool is_archive_file(const std::string& input_file);
 
 } // namespace Slic3r::Biz::FileLoadingLogic

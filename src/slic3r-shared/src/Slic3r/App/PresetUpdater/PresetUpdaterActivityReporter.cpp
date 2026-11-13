@@ -9,6 +9,7 @@
 #include <fmt/format.h>
 
 #include <chrono>
+#include <string>
 #include <utility>
 
 namespace Slic3r::App {
@@ -48,10 +49,10 @@ bool PresetUpdaterActivityReporter::tracks(Biz::PresetUpdater::JobId job_id) con
 }
 
 void PresetUpdaterActivityReporter::report_progress(
-    Biz::PresetUpdater::JobId job_id, const std::string& target, int attempt
+    Biz::PresetUpdater::JobId job_id, const Biz::PresetUpdater::PresetUpdaterProgress& progress
 )
 {
-    m_status.report_progress(job_id, target, attempt);
+    m_status.report_progress(job_id, progress);
 }
 
 void PresetUpdaterActivityReporter::report_install_finished(
@@ -66,23 +67,41 @@ void PresetUpdaterActivityReporter::report_problems(std::vector<Problem> problem
     m_problems.report_problems(std::move(problems));
 }
 
-void PresetUpdaterActivityReporter::report_updates_available(size_t update_count)
+void PresetUpdaterActivityReporter::report_updates_available(
+    size_t update_count, size_t new_vendor_count
+)
 {
     using namespace PopNotification;
 
-    if (m_dialog_open || update_count == 0 || !m_show_dialog_callback) {
+    if (m_dialog_open || (update_count == 0 && new_vendor_count == 0) || !m_show_dialog_callback) {
         return;
     }
 
     // TRN Preset updater notification header.
     const std::string header = Biz::_u8L("Configuration updates available");
-    // TRN Preset updater notification. {} counts the updates found.
-    const std::string format = Biz::_L_PLURAL_u8(
-        "{} preset update is ready to install.",
-        "{} preset updates are ready to install.",
-        static_cast<int>(update_count)
-    );
-    const std::string body = fmt::format(fmt::runtime(format), update_count);
+
+    std::string body;
+    if (update_count > 0) {
+        const std::string format = Biz::_L_PLURAL_u8(
+            // TRN Preset updater notification. {} counts the updates found.
+            "{} preset update is available.",
+            "{} preset updates are available.",
+            static_cast<int>(update_count)
+        );
+        body += fmt::format(fmt::runtime(format), update_count);
+    }
+    if (new_vendor_count > 0) {
+        if (!body.empty()) {
+            body += "\n";
+        }
+        const std::string format = Biz::_L_PLURAL_u8(
+            // TRN Preset updater notification. {} counts vendors not on this computer yet.
+            "{} new vendor is available.",
+            "{} new vendors are available.",
+            static_cast<int>(new_vendor_count)
+        );
+        body += fmt::format(fmt::runtime(format), new_vendor_count);
+    }
 
     AppServices::instance().pop_notification_center().upsert_notification(
         PopNotificationData{
@@ -110,13 +129,15 @@ void PresetUpdaterActivityReporter::report_updates_available(size_t update_count
     m_problems.refresh();
 }
 
-void PresetUpdaterActivityReporter::report_check_finished(size_t update_count)
+void PresetUpdaterActivityReporter::report_check_finished(
+    size_t update_count, size_t new_vendor_count
+)
 {
     if (m_dialog_open) {
         return;
     }
-    if (update_count > 0) {
-        report_updates_available(update_count);
+    if (update_count > 0 || new_vendor_count > 0) {
+        report_updates_available(update_count, new_vendor_count);
     }
 }
 
@@ -133,7 +154,6 @@ void PresetUpdaterActivityReporter::set_dialog_open(bool dialog_open)
         );
     }
 
-    m_status.set_dialog_open(dialog_open);
     m_problems.set_dialog_open(dialog_open);
 }
 

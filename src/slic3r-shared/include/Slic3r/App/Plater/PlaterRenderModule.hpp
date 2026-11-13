@@ -4,6 +4,7 @@
 
 #include "Slic3r/App/Undo/Store.hpp"
 #include "Slic3r/App/InvalidDataDialog.hpp"
+#include "Slic3r/App/EffectiveValuesDialog.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 #include "Slic3r/Biz/ISelectedProjectChangedListener.hpp"
 #include "Slic3r/Biz/Preset/IPresetChangedListener.hpp"
@@ -12,9 +13,8 @@
 #include "Slic3r/Biz/Emboss/IFontManager.hpp"
 #include "Slic3r/App/Yoga/Item.hpp"
 #include "Slic3r/App/DialogNavigation.hpp"
-#include "Slic3r/App/MenuManager.hpp"
-#include "Slic3r/App/CommandBindingManager.hpp"
 #include "Slic3r/App/Lua/PluginSystem.hpp"
+#include "Slic3r/App/Lua/PrintModePlugins.hpp"
 #include "Slic3r/App/Scene/GizmoManager.hpp"
 #include "Slic3r/App/Scene/ModelGeometryProvider.hpp"
 #include "Slic3r/App/Plater/ContextMenuGizmo.hpp"
@@ -38,10 +38,10 @@ class TopBar;
 class PreferencesDialog;
 class ToolBarButton;
 class ToolBarSwitchButton;
-class NumberEntryDialog;
 class CrashedProjectsDialog;
 class ProjectSaver;
 class PresetUpdaterDialog;
+class MsgBoxHandler;
 } // namespace Slic3r::App
 
 namespace Slic3r::App::Lua {
@@ -62,6 +62,8 @@ class RotationGizmo;
 class ScaleGizmo;
 class PlaceOnFaceGizmo;
 class PaintOnSupportsGizmo;
+class SlaSupportPointsGizmo;
+class SlaHollowGizmo;
 class PaintOnSeamsGizmo;
 class PaintOnFuzzySkinGizmo;
 class MultiMaterialPaintingGizmo;
@@ -107,6 +109,7 @@ public:
     void render_scene(Render::CommandBuffer& cmd_buffer) override;
     void render_imgui(Render::CommandBuffer& cmd_buffer) override;
     void on_scene_mouse_event(const Platform::MouseEvent& e) override;
+    void on_frame_begin() override;
     void on_scene_selection_changed(
         Domain::SelectionId project_id,
         const Biz::Scene::ObjectSelection& selection
@@ -125,17 +128,9 @@ public:
     void navigate_to_item(const Domain::ConfigItem* config_item);
 
     void open_search();
-    void set_modal_dialog(ModalDialog dialog);
+    void set_modal_dialog(ModalDialog dialog) override;
 
-    virtual void get_user_number_and_process(
-        const std::string& message,
-        const std::string& prompt,
-        const std::string& title,
-        int value,
-        int min,
-        int max,
-        std::function<void(int)> on_process
-    ) override;
+    MsgBoxHandler* msg_box_handler() override;
 
     Scene::IToolGizmo* tool_gizmo(Scene::ToolType type, Domain::PrinterTechnology pt) override;
 
@@ -207,6 +202,7 @@ private:
     // We need these to outlive the TopBar bellow
     std::unique_ptr<Biz::Emboss::IFontManager> m_font_manager = nullptr;
     Lua::PluginSystem m_plugin_system;
+    Lua::PrintModePlugins m_print_mode_plugins;
 
     // main window layout
     std::unique_ptr<PlaterRenderLayout> m_layout;
@@ -220,7 +216,6 @@ private:
     Yoga::Passthrough<SidebarPlaterActionButtons> m_sidebar_action_buttons;
     Yoga::Passthrough<History> m_history;
     Yoga::Passthrough<PreferencesDialog> m_preferences_dialog;
-    Yoga::Passthrough<NumberEntryDialog> m_number_entry_dialog;
     Yoga::Passthrough<PresetUpdaterDialog> m_preset_updater_dialog;
     Yoga::Passthrough<WelcomeDialog> m_welcome_dialog;
     Yoga::Passthrough<CrashedProjectsDialog> m_crashed_projects_dialog;
@@ -235,6 +230,8 @@ private:
     ToolBarButton* m_toolbar_simplify                = nullptr;
     ToolBarButton* m_toolbar_arrange                 = nullptr;
     ToolBarButton* m_toolbar_paint_on_supports       = nullptr;
+    ToolBarButton* m_toolbar_sla_support_points      = nullptr;
+    ToolBarButton* m_toolbar_sla_hollow              = nullptr;
     ToolBarButton* m_toolbar_paint_on_seams          = nullptr;
     ToolBarButton* m_toolbar_paint_on_fuzzy_skin     = nullptr;
     ToolBarButton* m_toolbar_multi_material_painting = nullptr;
@@ -253,6 +250,8 @@ private:
     ArrangeGizmo* m_arrange_gizmo                               = nullptr;
     SimplifyGizmo* m_simplify_gizmo                             = nullptr;
     PaintOnSupportsGizmo* m_paint_on_supports_gizmo             = nullptr;
+    SlaSupportPointsGizmo* m_sla_support_points_gizmo           = nullptr;
+    SlaHollowGizmo* m_sla_hollow_gizmo                          = nullptr;
     PaintOnSeamsGizmo* m_paint_on_seams_gizmo                   = nullptr;
     PaintOnFuzzySkinGizmo* m_paint_on_fuzzy_skin_gizmo          = nullptr;
     MultiMaterialPaintingGizmo* m_multi_material_painting_gizmo = nullptr;

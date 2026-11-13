@@ -21,6 +21,8 @@
 #include <Slic3r/App/AppConfig.hpp>
 #include <Slic3r/App/AppConfigInteractor.hpp>
 #include <Slic3r/App/AppConfigProvider.hpp>
+#include <Slic3r/App/Desktop/Mouse3D/Mouse3DBackend.hpp>
+#include <Slic3r/App/Mouse3D/Mouse3DController.hpp>
 #include <Slic3r/App/WX/FileExplorerHandler.hpp>
 #include <Slic3r/App/Theme.hpp>
 #include <Slic3r/App/Plater/ThumbnailImageGenerator.hpp>
@@ -42,14 +44,19 @@
 #include <Slic3r/Biz/UserAccount/UserAccountTokenStore.hpp>
 #include <Slic3r/Biz/AppInstance/AppInstanceMessageHandlerFactory.hpp>
 #include <Slic3r/Biz/AppInstance/AppInstanceUtils.hpp>
+#include <Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp>
 #include "Slic3r/Biz/WX/FontManager.hpp"
 
 #include "Slic3r/Biz/Scene/BedGeometry.hpp"
+#include <boost/filesystem/exception.hpp>
 #include <boost/filesystem/path.hpp>
 #include <boost/algorithm/string.hpp>
 
 #include <Slic3r/App/WX/format.hpp>
 #include <Slic3r/App/WX/I18N.hpp>
+
+#include <cstdint>
+#include <span>
 
 #ifdef WIN32
 #include <dbt.h>
@@ -122,6 +129,40 @@ void register_win32_device_notification_event()
                 break;
             }
             return true;
+        }
+    );
+
+    wxWindow::MSWRegisterMessageHandler(
+        WM_INPUT,
+        [](wxWindow* win, WXUINT /* nMsg */, WXWPARAM wParam, WXLPARAM lParam)
+        {
+            if (GET_RAWINPUT_CODE_WPARAM(wParam) == RIM_INPUT) {
+                RAWINPUT raw_input;
+                UINT raw_input_size    = sizeof(RAWINPUT);
+                const UINT copied_size = ::GetRawInputData(
+                    reinterpret_cast<HRAWINPUT>(lParam),
+                    RID_INPUT,
+                    &raw_input,
+                    &raw_input_size,
+                    sizeof(RAWINPUTHEADER)
+                );
+
+                AppServices& app_services = AppServices::instance();
+                if (copied_size != static_cast<UINT>(-1)
+                    && raw_input.header.dwType == RIM_TYPEHID
+                    && app_services.has_mouse_3d_controller())
+                {
+                    app_services.mouse_3d_controller().handle_hid_report(
+                        std::span<const std::uint8_t>(
+                            raw_input.data.hid.bRawData,
+                            raw_input.data.hid.dwSizeHid
+                        )
+                    );
+                }
+            }
+
+            // DefWindowProc must still be called to clean up after RIM_INPUT.
+            return false;
         }
     );
 
@@ -234,6 +275,9 @@ bool DesktopApp::OnInit()
     Theme::Style style = app_services.app_config().get<Theme::Style>("theme");
 
     app_services.set_theme(std::make_unique<Theme>(style));
+    app_services.theme().set_transparent_window_alpha(
+        app_services.app_config().get<double>("transparent_window_alpha")
+    );
 
     const AppearanceResult result = SetAppearance(
         style == Theme::Style::Dark ? wxAppBase::Appearance::Dark : wxAppBase::Appearance::Light
@@ -333,9 +377,30 @@ bool DesktopApp::OnInit()
         std::make_shared<App::ThumbnailStoreUpdater>(*m_thumbnail_image_generator, m_thumbnail_store);
 
     app_services.set_dialog_manager(std::make_unique<WX::DialogManager>());
+
+    app_services.set_navigator(std::make_unique<Navigator>());
+    Navigator& navigator{app_services.navigator()};
+
     app_services.set_pop_notification_center(
         std::make_unique<PopNotification::PopNotificationCenter>(*m_project_interactor.get())
     );
+
+    app_services.set_mouse_3d_controller(
+        std::make_unique<Mouse3D::Mouse3DController>(
+            app_services.app_config(),
+            app_services.app_config_interactor(),
+            platform_services.main_thread_dispatcher()
+        )
+    );
+    Bind(
+        wxEVT_ACTIVATE_APP,
+        [](wxActivateEvent& event)
+        {
+            AppServices::instance().mouse_3d_controller().set_application_active(event.GetActive());
+            event.Skip();
+        }
+    );
+
     app_services.set_file_explorer_handler(std::make_unique<WX::FileExplorerHandler>());
     app_services.file_explorer_handler()
         .add_listener<Platform::IFileExplorerErrorListener>(
@@ -345,12 +410,29 @@ bool DesktopApp::OnInit()
         .add_listener<Biz::Platform::JobManager::IJobManagerStatusChangedListener>(
             &app_services.pop_notification_center()
         );
+    platform_services.job_manager()
+        .create_job(
+            "prune_webview_data",
+            [](Biz::JThread::StopToken) { prune_stale_webview_data_dirs(); }
+        )
+        .start();
+    platform_services.job_manager()
+        .create_job(
+            "prune_archive_workspaces",
+            [](Biz::JThread::StopToken) { Biz::FileOpen::remove_stale_extractions(); }
+        )
+        .start();
     m_project_interactor->user_account_interactor()
         .add_listener<Biz::UserAccount::IUserAccountListener>(
             &app_services.pop_notification_center()
         );
     m_project_interactor->connect_message_handler()
         .add_listener<Biz::Connect::IConnectHandlerListener>(
+            &app_services.pop_notification_center()
+        );
+    m_project_interactor->physical_printer_interactor()
+        .printer_preset_selector()
+        .add_listener<Biz::Preset::IPrinterPresetSelectorListener>(
             &app_services.pop_notification_center()
         );
     PresetUpdater::ControllerEnvironment preset_updater_environment;
@@ -375,10 +457,10 @@ bool DesktopApp::OnInit()
         [this](bool has_forced) { on_preset_updater_forced_state(has_forced); }
     );
     preset_updater_controller.set_show_dialog_callback(
-        [this]()
+        [this, &navigator]()
         {
             if (m_init_completed) {
-                m_navigator.set_modal_dialog(ModalDialog::PresetUpdater);
+                navigator.set_modal_dialog(ModalDialog::PresetUpdater);
             } else {
                 m_loading_module->set_opened_preset_updater(true);
             }
@@ -398,11 +480,11 @@ bool DesktopApp::OnInit()
     );
 
     m_loading_module =
-        std::make_unique<LoadingRenderModule>(preset_updater_controller, m_navigator);
+        std::make_unique<LoadingRenderModule>(preset_updater_controller, navigator);
 
     m_project_saver = std::make_shared<ProjectSaver>(*m_project_interactor, *m_thumbnail_store);
 
-    m_main_frame = new MainFrame(m_workbench, *m_project_interactor, m_navigator, m_project_saver);
+    m_main_frame = new MainFrame(m_workbench, *m_project_interactor, navigator, m_project_saver);
     platform_services.app_instance_message_handler().init(m_main_frame->GetHandle());
     Platform::WX::WXRenderCanvas& canvas = m_main_frame->get_render_canvas();
     m_gl_context                         = canvas.release_context();
@@ -412,7 +494,7 @@ bool DesktopApp::OnInit()
     // which only exists now, and nothing preset related has been touched yet.
     preset_updater_controller.start();
 
-    m_navigator.set_canvas(canvas);
+    navigator.set_canvas(canvas);
 
     canvas.set_render_module(m_loading_module.get());
 
@@ -463,10 +545,41 @@ void DesktopApp::finish_init()
 
     // load new presets
     m_bundle_paths = Biz::Preset::IO::BundlePaths::make_standard_runtime();
-    preset_interactor.load_preset_bundle(m_bundle_paths);
+
+    try {
+        preset_interactor.load_preset_bundle(m_bundle_paths);
+    } catch (const fs::filesystem_error& filesystem_error) {
+        if (m_splash_screen) {
+            m_splash_screen->Destroy();
+        }
+
+        const std::string message =
+            // TRN Error dialog shown at startup. The path of the folder follows on the next line.
+            Biz::_u8L("PrusaSlicer could not copy the system presets into its data folder:")
+            + "\n"
+            + m_bundle_paths.local_bundle_path
+            + "\n\n"
+            + Biz::_u8L(
+                "Make sure the folder is writable, the disk is not full and the folder path is not too long."
+            )
+            + "\n\n"
+            + Biz::_u8L("Details:")
+            + "\n"
+            + filesystem_error.what()
+            + "\n\n"
+            + Biz::_u8L("PrusaSlicer will close.");
+
+        app_services.dialog_manager()
+            .show_error_dialog(message, Biz::_u8L("PrusaSlicer - Loading presets failed"));
+        m_main_frame->Close(true);
+
+        return;
+    }
+
+    m_project_interactor->matdb_interactor().init_client();
 
     if (m_splash_screen)
-        m_splash_screen->SetText(WX::_L("Initializing Prepare Mode") + dots);
+        m_splash_screen->SetText(WX::_L("Initializing prepare mode") + dots);
 
     auto font_manager = std::make_unique<Biz::WX::FontManager>(data_dir());
 
@@ -482,7 +595,7 @@ void DesktopApp::finish_init()
     );
 
     if (m_splash_screen)
-        m_splash_screen->SetText(WX::_L("Initializing Preview Mode") + dots);
+        m_splash_screen->SetText(WX::_L("Initializing preview mode") + dots);
 
     m_preview_module = std::make_unique<Preview::PreviewRenderModule>(
         m_workbench,
@@ -512,7 +625,15 @@ void DesktopApp::finish_init()
 
     Platform::WX::WXRenderCanvas& canvas = m_main_frame->get_render_canvas();
 
-    m_navigator.on_init(*m_plater_module, *m_preview_module, canvas, m_project_interactor.get());
+    Navigator& navigator{AppServices::instance().navigator()};
+    navigator.on_init(*m_plater_module, *m_preview_module, canvas, m_project_interactor.get());
+    m_project_interactor->file_opening_interactor().set_archive_dialog(
+        [&navigator](
+            std::vector<Biz::FileOpen::ArchiveFile> files,
+            Biz::FileOpen::OpenFilesOptions options,
+            Biz::FileOpen::ArchiveSelectionDone done
+        ) { return navigator.confirm_open_files(std::move(files), options, std::move(done)); }
+    );
 
     // Closed before the module goes, so the model stops counting it as an open dialog.
     m_loading_module->set_opened_preset_updater(false);
@@ -527,8 +648,8 @@ void DesktopApp::finish_init()
 
     // The main frame was shown while the preset updater module was the active one, so the
     // shortcuts of the plater have to be picked up now.
-    if (m_navigator.callbacks().render_module_switched) {
-        m_navigator.callbacks().render_module_switched();
+    if (navigator.callbacks().render_module_switched) {
+        navigator.callbacks().render_module_switched();
     }
 
     m_project_interactor->user_account_interactor()
@@ -552,7 +673,7 @@ void DesktopApp::finish_init()
         )
     );
     app_services.pop_notification_center().set_open_invalid_data_dialog_fn(
-        std::bind(&Navigator::open_invalid_data_dialog, &m_navigator)
+        [&navigator]() { navigator.set_modal_dialog(ModalDialog::InvalidData); }
     );
 
     m_plater_module->plugin_system().add_listener<Lua::IPluginInstallationListener>(
@@ -562,6 +683,11 @@ void DesktopApp::finish_init()
 #ifdef WIN32
     m_main_frame->register_win32_callbacks();
 #endif
+
+    m_mouse_3d_backend = Mouse3DBackendFactory::create_mouse_3d_backend(
+        app_services.mouse_3d_controller(),
+        platform_services.main_thread_dispatcher()
+    );
 
     if (m_splash_screen)
         m_splash_screen->Destroy();
@@ -590,10 +716,16 @@ void DesktopApp::finish_init()
 
 DesktopApp::~DesktopApp()
 {
+    m_mouse_3d_backend.reset();
+
     // Before m_project_interactor, which owns the interactor the model listens to and calls into.
     AppServices& app_services = AppServices::instance();
     if (app_services.has_preset_updater_controller()) {
         app_services.preset_updater_controller().shutdown();
+        app_services.navigator().shutdown();
+    }
+    if (m_project_interactor) {
+        m_project_interactor->file_opening_interactor().set_archive_dialog(nullptr);
     }
 
     Biz::Platform::close();
@@ -703,13 +835,34 @@ void DesktopApp::handle_app_instance_message(const std::string& message)
 
 void DesktopApp::handle_HID_device_detached_event(const std::string& message)
 {
-    // TODO: Add 3d mouse control
+    if (m_mouse_3d_backend != nullptr) {
+        m_mouse_3d_backend->handle_hid_device_detached(message);
+    }
 }
 
 void DesktopApp::handle_HID_device_attached_event(const std::string& message)
 {
-    // TODO: Add 3d mouse control
+    if (m_mouse_3d_backend != nullptr) {
+        m_mouse_3d_backend->handle_hid_device_attached(message);
+    }
 }
+
+#ifdef WIN32
+int DesktopApp::FilterEvent(wxEvent& event)
+{
+    // The 3Dconnexion driver sends mouse wheel events to the applications not registered at it,
+    // which would zoom the scene.
+    if (event.GetEventType() == wxEVT_MOUSEWHEEL
+        && dynamic_cast<Platform::WX::WXRenderCanvas*>(event.GetEventObject()) != nullptr
+        && AppServices::instance().has_mouse_3d_controller()
+        && AppServices::instance().mouse_3d_controller().consume_driver_mouse_wheel_event())
+    {
+        return Event_Ignore;
+    }
+
+    return wxApp::FilterEvent(event);
+}
+#endif
 
 void DesktopApp::handle_volumes_changed_event()
 {

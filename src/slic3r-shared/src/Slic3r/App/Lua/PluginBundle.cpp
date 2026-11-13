@@ -1,8 +1,12 @@
 #include "Slic3r/App/Lua/PluginBundle.hpp"
 #include "Slic3r/Biz/Crypto//Checksum.hpp"
+#include "Slic3r/Biz/I18N/I18N.hpp"
+
 #include <Slic3r/Assert.hpp>
+#include <Slic3r/Log.hpp>
 
 #include <ranges>
+#include <string_view>
 
 #include <boost/filesystem/path.hpp>
 #include <boost/filesystem/operations.hpp>
@@ -11,7 +15,6 @@
 #include <tl/expected.hpp>
 
 #include <fmt/format.h>
-#include <spdlog/spdlog.h>
 
 namespace fs = boost::filesystem;
 
@@ -22,7 +25,8 @@ using Result = tl::expected<T, std::string>;
 
 namespace {
 const std::map<PluginApiType, std::string> PLUGIN_API_TYPE_NAMES = {
-    {PluginApiType::Project, "project.plugin"}
+    {PluginApiType::Project, "project.plugin"},
+    {PluginApiType::PrintMode, "print.print_mode"}
 };
 }
 
@@ -85,8 +89,25 @@ Result<PluginBundleMeta> load_meta_from_text(std::string_view json_str)
         {
             PluginBundleMeta::ApiVersionMap ret;
             std::map<std::string, std::string> raw_data;
-            if (auto err = get("required_apis", raw_data, true); err.has_value()) {
+            if (auto err = get("required_apis", raw_data, false); err.has_value()) {
                 return tl::unexpected(err.value());
+            }
+            if (raw_data.empty()) {
+                // Marketplace manifests declare a single plugin API semver
+                // (plugin_api_version) instead of a per-API map. Treat it as the
+                // requirement for the only API type we have.
+                std::string plugin_api_version;
+                if (auto err = get("plugin_api_version", plugin_api_version, false);
+                    err.has_value()) {
+                    return tl::unexpected(err.value());
+                }
+                if (plugin_api_version.empty()) {
+                    return tl::unexpected(
+                        std::string{"Missing required field 'required_apis' "
+                                    "(or 'plugin_api_version')"}
+                    );
+                }
+                raw_data.emplace(to_string(PluginApiType::Project), plugin_api_version);
             }
             for (const auto& [raw_api, raw_ver] : raw_data) {
                 auto api = parse_plugin_api_type(raw_api);
@@ -113,6 +134,9 @@ return tl::unexpected{err.value()}; \
 #define SAFE_GET_OPT(field) SAFE_GET_(field, false)
 
         SAFE_GET(id)
+        if (!is_safe_path_component(meta.id)) {
+            return tl::unexpected{fmt::format("Field 'id' is not a valid bundle id: \"{}\"", meta.id)};
+        }
         SAFE_GET(name)
         SAFE_GET(version);
         SAFE_GET(author)
@@ -272,6 +296,47 @@ PluginInstallResult PluginBundle::install(const std::string& dest_base_dir)
         }
     }
 
+    m_path = dest_base_dir;
+    m_protected = false;
+
+    return {};
+}
+
+PluginInstallResult PluginBundle::uninstall(const std::string& base_dir)
+{
+    if (is_protected()) {
+        return tl::unexpected{fmt::format(
+            // TRN First {} is a plugin bundle identifier, the second {} is version
+            fmt::runtime(Biz::_u8L("Plugin uninstall failed: Cannot uninstall app bundled plugin bundle '{}@{}'")),
+            m_meta.id,
+            m_meta.version.to_string()
+        )};
+
+    }
+
+    fs::path p{m_path};
+
+    if (!is_path_in_sandbox({base_dir}, p)) {
+        return tl::unexpected{fmt::format(
+            // TRN First {} is a plugin bundle identifier, the second {} is version
+            fmt::runtime(Biz::_u8L("Plugin uninstall failed: Cannot uninstall app bundled plugin bundle '{}@{}'")),
+            m_meta.id,
+            m_meta.version.to_string()
+        )};
+    }
+
+    boost::system::error_code ec;
+    fs::remove_all(p, ec);
+    if (ec.failed()) {
+        return tl::unexpected{fmt::format(
+            // TRN First {} is a plugin bundle identifier, the second {} is version, the last {} is an error message
+            fmt::runtime(Biz::_u8L("Plugin uninstall failed: Cannot uninstall app bundled plugin bundle '{}@{}': {}")),
+            m_meta.id,
+            m_meta.version.to_string(),
+            ec.message()
+        )};
+    }
+
     return {};
 }
 
@@ -280,7 +345,6 @@ PluginBundle::Plugins PluginBundle::load_plugins()
     Plugins plugins;
 
     const auto files = m_content_provider->list_files();
-    const std::string id_prefix = m_meta.id + ".";
     for (const auto& f : files) {
         if (f.ends_with(".lua")) {
             Biz::Lua::LuaEngine lua;
@@ -295,7 +359,7 @@ PluginBundle::Plugins PluginBundle::load_plugins()
                 sol::error err = ret;
                 SPDLOG_ERROR("Failed loading plugin {}: {}", entry_path.string(), err.what());
             }
-            if (auto result = Plugin::parse(lua, id_prefix, entry_path.string())) {
+            if (auto result = Plugin::parse(lua, m_meta.id, entry_path.string())) {
                 auto&& plugin = result.value();
 
                 plugins.emplace_back(std::move(plugin));

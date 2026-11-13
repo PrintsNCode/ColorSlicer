@@ -28,6 +28,7 @@ endif ()
 option(SLIC3R_ASAN "Enable ASan on Clang and GCC" 0)
 option(SLIC3R_UBSAN "Enable UBSan on Clang and GCC" 0)
 option(SLIC3R_REPO_URL "Preset repo URL")
+option(SLIC3R_ALLOW_LOCALHOST_SERVICES "Let PRUSA_*_URL env overrides point at localhost (local development only, never for release builds)" OFF)
 option(SLIC3R_RELEASE_DEBUG_SYMBOLS "Build release build with debug symbols" ON)
 option(SLIC3R_ENABLE_PROFILING "Enable Tracy profiling instrumentation" OFF)
 
@@ -90,6 +91,24 @@ if (SLIC3R_STATIC)
     set(CMAKE_FIND_PACKAGE_PREFER_CONFIG ON)
 endif ()
 set(SLIC3R_RESOURCES_DIR ${CMAKE_SOURCE_DIR}/resources)
+
+# The material database is downloaded by the deps build (deps/+matdb) and installed
+# into <deps prefix>/share/matdb. Copy it into the resources dir so the install step
+# and the application pick it up like any other resource.
+set(SLIC3R_MATDB_DIR "")
+foreach (_prefix ${CMAKE_PREFIX_PATH})
+    # CMAKE_PREFIX_PATH may be relative to the build directory.
+    get_filename_component(_prefix "${_prefix}" ABSOLUTE BASE_DIR "${CMAKE_BINARY_DIR}")
+    if (IS_DIRECTORY "${_prefix}/share/matdb")
+        set(SLIC3R_MATDB_DIR "${_prefix}/share/matdb")
+        break()
+    endif ()
+endforeach ()
+if (NOT SLIC3R_MATDB_DIR)
+    message(FATAL_ERROR "Material database not found in CMAKE_PREFIX_PATH (<prefix>/share/matdb). Rebuild the dependencies in deps/.")
+endif ()
+file(REMOVE_RECURSE "${SLIC3R_RESOURCES_DIR}/matdb")
+file(COPY "${SLIC3R_MATDB_DIR}" DESTINATION "${SLIC3R_RESOURCES_DIR}")
 
 include("version.inc")
 include(GNUInstallDirs)
@@ -284,6 +303,77 @@ if (NOT SLIC3R_ASAN AND NOT SLIC3R_UBSAN)
 endif()
 
 include(Localization)
+
+if (SLIC3R_STATIC)
+    if (APPLE OR UNIX)
+        message(STATUS " [STATIC-FIX] Forcing Custom Static Dependencies...")
+
+        # 0. DETERMINE ROOT
+        if (NOT DEFINED CMAKE_PREFIX_PATH AND DEFINED ENV{DESTDIR})
+            set(CMAKE_PREFIX_PATH "$ENV{DESTDIR}/usr/local")
+        endif()
+
+        if (EXISTS "${CMAKE_PREFIX_PATH}")
+            # 1. HIJACK PKG_CONFIG_PATH & FORCE CURL
+            set(ENV{PKG_CONFIG_PATH} "${CMAKE_PREFIX_PATH}/lib/pkgconfig:${CMAKE_PREFIX_PATH}/lib64/pkgconfig:$ENV{PKG_CONFIG_PATH}")
+            set(CURL_ROOT "${CMAKE_PREFIX_PATH}")
+            set(CURL_NO_CURL_CMAKE ON)
+            set(CURL_USE_STATIC_LIBS ON)
+
+            # 2. FORCE OPENSSL ("God Mode" Lock)
+            set(OPENSSL_ROOT_DIR "${CMAKE_PREFIX_PATH}")
+            set(OPENSSL_USE_STATIC_LIBS TRUE CACHE BOOL "Force static" FORCE)
+            
+            # Find libs (covers both lib and lib64 locations)
+            find_library(_ssl_lib NAMES ssl libssl PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/lib64" NO_DEFAULT_PATH)
+            find_library(_crypto_lib NAMES crypto libcrypto PATHS "${CMAKE_PREFIX_PATH}/lib" "${CMAKE_PREFIX_PATH}/lib64" NO_DEFAULT_PATH)
+
+            if (_ssl_lib AND _crypto_lib)
+                message(STATUS " [STATIC-FIX] Locked OpenSSL to: ${_ssl_lib}")
+                
+                # Determine extra system libs (Linux needs dl/pthread, macOS usually doesn't or handles implicitly)
+                set(_sys_libs "")
+                if (UNIX AND NOT APPLE)
+                    set(_sys_libs dl pthread)
+                endif()
+
+                # A. Force Cache Variables
+                set(OPENSSL_LIBRARIES "${_ssl_lib};${_crypto_lib};${_sys_libs}" CACHE STRING "Force Libs" FORCE)
+                set(OPENSSL_SSL_LIBRARY "${_ssl_lib}" CACHE FILEPATH "Force SSL" FORCE)
+                set(OPENSSL_CRYPTO_LIBRARY "${_crypto_lib}" CACHE FILEPATH "Force Crypto" FORCE)
+                set(OPENSSL_INCLUDE_DIR "${CMAKE_PREFIX_PATH}/include" CACHE PATH "Force Include" FORCE)
+                set(OpenSSL_FOUND TRUE CACHE BOOL "Force Found" FORCE)
+                set(OPENSSL_FOUND TRUE CACHE BOOL "Force Found" FORCE)
+
+                # B. Create Imported Targets
+                if(NOT TARGET OpenSSL::Crypto)
+                    add_library(OpenSSL::Crypto STATIC IMPORTED GLOBAL)
+                    set_target_properties(OpenSSL::Crypto PROPERTIES IMPORTED_LOCATION "${_crypto_lib}" INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_PREFIX_PATH}/include")
+                    if(_sys_libs)
+                        set_property(TARGET OpenSSL::Crypto APPEND PROPERTY INTERFACE_LINK_LIBRARIES ${_sys_libs})
+                    endif()
+                endif()
+                
+                if(NOT TARGET OpenSSL::SSL)
+                    add_library(OpenSSL::SSL STATIC IMPORTED GLOBAL)
+                    set_target_properties(OpenSSL::SSL PROPERTIES IMPORTED_LOCATION "${_ssl_lib}" INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_PREFIX_PATH}/include")
+                    set_property(TARGET OpenSSL::SSL APPEND PROPERTY INTERFACE_LINK_LIBRARIES OpenSSL::Crypto ${_sys_libs})
+                endif()
+            else()
+                message(FATAL_ERROR " [STATIC-FIX] CMAKE_PREFIX_PATH set but static OpenSSL not found in ${CMAKE_PREFIX_PATH}.")
+            endif()
+        endif()
+    else()
+        # Windows / Other
+        set(OPENSSL_USE_STATIC_LIBS TRUE)
+        if (DEFINED CMAKE_PREFIX_PATH)
+            set(OPENSSL_ROOT_DIR "${CMAKE_PREFIX_PATH}")
+        elseif (DEFINED ENV{DESTDIR})
+            set(OPENSSL_ROOT_DIR "$ENV{DESTDIR}/usr/local")
+        endif()
+    endif()
+endif()
+
 include(GlobalDependencies)
 
 include(CheckAndPrintSummary)

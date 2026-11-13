@@ -55,12 +55,12 @@ bool FdmViewerWrapper::init(Render::Device& device, Scene::Scene& scene, Scene::
     }
 }
 
-bool FdmViewerWrapper::set_settings(const FdmViewerWrapperSettings &settings)
+bool FdmViewerWrapper::set_settings(const FdmViewerWrapperSettings& settings)
 {
     m_settings = settings;
 
     try {
-        m_slider_layers = Yoga::Passthrough<DoubleSliderForLayers>(std::make_unique<DoubleSliderForLayers>());
+        m_slider_layers = Yoga::Passthrough<DoubleSliderForLayers>(std::make_unique<DoubleSliderForLayers>(*m_settings.navigator));
         set_layers_slider_base_flags(m_settings.layers_slider_base_flags);
         m_slider_layers->seq_top_layer_only(m_settings.seq_top_layer_only);
         m_slider_layers->set_use_default_colors(m_settings.slider_layers_use_default_colors);
@@ -85,6 +85,8 @@ bool FdmViewerWrapper::set_settings(const FdmViewerWrapperSettings &settings)
 
         if (m_viewer.is_top_layer_only_view_range() != settings.seq_top_layer_only)
             m_viewer.toggle_top_layer_only_view_range();
+
+        m_viewer.set_options_visibility_from_settings(settings.options_visibility);
 
         m_legend = Yoga::Passthrough<LegendWindow>(std::make_unique<LegendWindow>(&m_viewer, this));
         m_legend->callbacks().cb_extrusion_role_visibility_changed = std::bind(&FdmViewerWrapper::on_extrusion_role_visibility_changed, this);
@@ -1026,7 +1028,7 @@ void FdmViewerWrapper::render_customize_extrusion_roles_colors_popup()
 
     ImGui::OpenPopup(wnd_name.c_str());
     if (ImGui::BeginPopupModal(wnd_name.c_str(), &open, windows_flag)) {
-        ImGui::Text("%s:", _u8L("Extrusion Roles Colors").c_str());
+        ImGui::Text("%s:", _u8L("Extrusion roles colors").c_str());
         if (ImGui::BeginTable("Roles", 1, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInner)) {
             for (uint8_t i = 0; i < uint8_t(GCODE_EXTRUSION_ROLES_COUNT); ++i) {
                 GCodeExtrusionRole role = GCodeExtrusionRole(i);
@@ -1073,7 +1075,7 @@ void FdmViewerWrapper::render_customize_options_colors_popup()
 
     ImGui::OpenPopup(wnd_name.c_str());
     if (ImGui::BeginPopupModal(wnd_name.c_str(), &open, windows_flag)) {
-        ImGui::Text("%s:", _u8L("Options Colors").c_str());
+        ImGui::Text("%s:", _u8L("Options colors").c_str());
         if (ImGui::BeginTable("Options", 1, ImGuiTableFlags_BordersOuter | ImGuiTableFlags_BordersInner)) {
             for (uint8_t i = uint8_t(OptionType::Travels); i <= uint8_t(OptionType::CustomGCodes); ++i) {
                 OptionType option = OptionType(i);

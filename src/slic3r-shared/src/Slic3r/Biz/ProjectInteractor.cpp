@@ -9,7 +9,10 @@
 #include "Slic3r/Domain/Model.hpp"
 #include "Slic3r/Domain/Preset/SelectedPreset.hpp"
 
+#include "Slic3r/Biz/ObjectList/ObjectListInteractor.hpp"
+
 #include "Slic3r/Biz/ISelectedProjectChangedListener.hpp"
+#include "Slic3r/Biz/IConfigContainerListChangedListener.hpp"
 #include "Slic3r/Biz/IProjectsChangedListener.hpp"
 #include "Slic3r/Biz/IMessageDialogProvider.hpp"
 #include "Slic3r/Biz/UserAccount/ConnectUtils.hpp"
@@ -38,6 +41,7 @@ using Slic3r::Domain::ConfigContainer;
 using Slic3r::Domain::ConfigItem;
 using Slic3r::Domain::ConfigPack;
 using Slic3r::Domain::ConfigPackFDM;
+using Slic3r::Domain::ConfigPackSLA;
 using Slic3r::Domain::ElementRefs;
 using Slic3r::Domain::ModelObject;
 using Slic3r::Domain::ModelVolume;
@@ -52,6 +56,18 @@ using Slic3r::Domain::TriangleSelector::TRIANGLE_STATE_TYPE_COUNT;
 using Slic3r::Domain::TriangleSelector::TriangleStateType;
 
 namespace Slic3r::Biz {
+
+void ProjectInteractor::wire_object_list_interactor()
+{
+    ObjectList::ObjectListInteractor& oli =
+    m_scene_interactor.object_list_interactor();
+
+    add_listener<IProjectsChangedListener>(&oli);
+    add_listener<IConfigContainerListChangedListener>(&oli);
+
+    oli.bind_project_interactor(*this);
+}
+
 Domain::SelectionId ProjectInteractor::Selection::config_container_id() const
 {
     if (project_id == Domain::INVALID_ID)
@@ -195,6 +211,7 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
                 return report_error(result.error());
             }
         }
+        m_physical_printer_interactor.load_physical_printers_from_3mf(project_id);
 
         if (added_project.config_containers().empty()) {
             added_project.config_containers().emplace_back(std::make_unique<ConfigContainer>());
@@ -258,7 +275,9 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
 
 void ProjectInteractor::load_project(
     const boost::filesystem::path& file_path,
-    EmptyProjectAction empty_project_action
+    EmptyProjectAction empty_project_action,
+    bool temporary_file,
+    std::function<void()> on_done
 )
 {
     invoke_listeners<IProjectsChangedListener>([](IProjectsChangedListener* l) {
@@ -274,20 +293,37 @@ void ProjectInteractor::load_project(
         }
     };
 
-    auto on_result{[this, file_path, empty_project_action](Project&& project)
+    auto on_result{[this, file_path, empty_project_action, temporary_file, on_done, report_error](Project&& project)
     {
-        const SelectionId previous_project_id = m_selection.project_id;
-        const bool replace_previous_project = empty_project_action == EmptyProjectAction::Replace
-            && selected_project_is_empty();
+        try {
+            const SelectionId previous_project_id = m_selection.project_id;
+            const bool replace_previous_project = empty_project_action == EmptyProjectAction::Replace
+                && selected_project_is_empty();
 
-        if (this->do_load_project(std::move(project), file_path).has_value()
-            && replace_previous_project)
-        {
-            this->remove_project(previous_project_id);
+            if (temporary_file) {
+                const std::string name = project.file_name();
+                project.set_file_path({});
+                project.set_file_name(name);
+            }
+
+            const tl::expected<SelectionId, std::string> loaded = this->do_load_project(
+                std::move(project),
+                temporary_file ? std::nullopt : std::make_optional(file_path)
+            );
+            if (loaded.has_value()) {
+                if (replace_previous_project) {
+                    this->remove_project(previous_project_id);
+                }
+            }
+        } catch (const std::exception& e) {
+            report_error(fmt::format("Loading file failed: {}", e.what()));
+        }
+        if (on_done) {
+            on_done();
         }
     }};
 
-    auto on_error{[report_error](std::exception_ptr eptr)
+    auto on_error{[report_error, on_done](std::exception_ptr eptr)
                   {
                       std::string description = "Unknown error";
                       try {
@@ -299,6 +335,9 @@ void ProjectInteractor::load_project(
                       } catch (...) {
                       }
                       report_error(description);
+                      if (on_done) {
+                          on_done();
+                      }
                   }};
 
     Platform::PlatformServices::instance()
@@ -435,6 +474,8 @@ tl::expected<SelectionId, std::string> ProjectInteractor::new_project_with_prese
     config_container.mutable_selected_preset() = SelectedPreset::make(preset_metadata, config_pack);
     if (const ConfigPackFDM* config_pack_fdm = std::get_if<ConfigPackFDM>(&config_pack)) {
         config_container.project_settings() = config_pack_fdm->project;
+    } else if (const ConfigPackSLA* config_pack_sla = std::get_if<ConfigPackSLA>(&config_pack)) {
+        config_container.sla_project_settings() = config_pack_sla->sla_project_settings;
     }
 
     return do_load_project(std::move(project));
@@ -962,22 +1003,23 @@ void ProjectInteractor::do_result_export_inner(const Domain::SlicingId id, Physi
     }
 }
 
-void ProjectInteractor::do_result_export(const Domain::SlicingId id, const boost::filesystem::path& dest_path)
+void ProjectInteractor::do_result_export(
+    const Domain::SlicingId id,
+    const boost::filesystem::path& dest_path,
+    const std::string& job_name
+)
 {
     set_output_dir(id.project_id, dest_path);
     set_output_extension(id.project_id, dest_path.extension().string());
-    m_physical_printer_interactor.remember_used_destination(std::string(
+    m_export_destination_interactor.remember_used(
         m_removable_drive_service.is_path_on_removable_drive(dest_path) ?
-            PhysicalPrinter::REMOVABLE_DRIVE_UUID :
-            PhysicalPrinter::LOCAL_DRIVE_UUID
-    ));
+            ExportDestination::ExportDestination::RemovableDrive :
+            ExportDestination::ExportDestination::LocalDrive
+    );
     PhysicalPrinter::PhysicalPrinterConfig config;
     config.payload = PhysicalPrinter::FileSystemExport{};
-    PrintHost::PrintHostJobData data{
-        std::monostate{},
-        dest_path,
-        PrintHost::get_export_format_from_extension(dest_path.extension().string())
-    };
+    PrintHost::PrintHostJobData data{std::monostate{}, dest_path};
+    data.job_name = job_name;
     do_result_export_inner(id, std::move(config), std::move(data));
 }
 
@@ -989,14 +1031,11 @@ void ProjectInteractor::do_result_upload(
 )
 {
     set_output_extension(id.project_id, boost::filesystem::path(filename).extension().string());
-    m_physical_printer_interactor.remember_used_destination(print_host_config.uuid);
+    m_export_destination_interactor.remember_used(ExportDestination::ExportDestination::PrintHost);
+    m_physical_printer_interactor.remember_used_printer(print_host_config.uuid);
     PhysicalPrinter::PhysicalPrinterConfig config {print_host_config};
     boost::filesystem::path dest_path(filename);
-    PrintHost::PrintHostJobData data{
-        std::monostate{},
-        dest_path,
-        PrintHost::get_export_format_from_extension(dest_path.extension().string())
-    };
+    PrintHost::PrintHostJobData data{std::monostate{}, dest_path};
     data.post_action = post_action;
     do_result_export_inner(id, std::move(config), std::move(data));
 }
@@ -1024,13 +1063,10 @@ void ProjectInteractor::do_result_upload_connect(
         filename = filename_override;
     }
 
-    m_physical_printer_interactor.remember_used_destination(std::string(PhysicalPrinter::PRUSA_CONNECT_UUID));
+    m_export_destination_interactor.remember_used(ExportDestination::ExportDestination::Connect);
+    m_physical_printer_interactor.remember_used_printer(m_physical_printer_interactor.selected_uuid());
     set_output_extension(id.project_id, boost::filesystem::path(filename).extension().string());
-    PrintHost::PrintHostJobData data{
-        std::monostate{},
-        filename,
-        PrintHost::get_export_format_from_extension(boost::filesystem::path(filename).extension().string())
-    };
+    PrintHost::PrintHostJobData data{std::monostate{}, filename};
     data.request_body_json = std::move(body_json);
     do_result_export_inner(id, std::move(config), std::move(data));
 }
@@ -1042,48 +1078,25 @@ void ProjectInteractor::on_download_models(const std::vector<std::string>& messa
     }
     m_file_downloader_interactor.download_files_prusaslicer_url(
         message,
-        selected_project_is_empty()
+        std::make_shared<FileDownloader::PrintablesFileDownloaderTag>()
     );
 }
-
 void ProjectInteractor::download_model_from_printables_tab(FileDownloader::FileDownloaderMultiTicket data)
 {
     m_file_downloader_interactor.init_multi_job(std::move(data));
 }
 
-void ProjectInteractor::open_downloaded_file(const boost::filesystem::path& path, bool in_new_project)
+void ProjectInteractor::on_files_downloaded(
+    const std::vector<boost::filesystem::path>& paths,
+    FileDownloader::FileDownloaderTagPtr tag
+)
 {
-    if (in_new_project) {
-        // file path could have locale dependent characters, do not use tolower
-        const std::string ext = path.extension().string();
-        const bool is_3mf     = ext == ".3mf" || ext == ".3MF";
-        // A single 3MF opened as a new project loads its full content (geometry + print,
-        // filament and printer settings). Other files start an empty project and add geometry.
-        if (is_3mf) {
-            load_project(path);
-            return;
-        }
-        new_project();
+    if (auto printables_tag =
+            std::dynamic_pointer_cast<FileDownloader::PrintablesFileDownloaderTag>(tag)) {
+        bool in_new_project = printables_tag->new_project;
+        ASSERT(!paths.empty());
+        m_file_opening_interactor.open(paths, {.new_project = in_new_project, .as_geometry = !in_new_project});
     }
-    load_models_to_project({path});
-}
-
-void ProjectInteractor::on_model_downloaded(const std::vector<boost::filesystem::path>& paths, bool in_new_project)
-{
-    ASSERT(!paths.empty());
-    boost::filesystem::path file_path = paths.front();
-    std::string ext_str = file_path.extension().string();
-    // file path could have locale dependent characters, do not use tolower
-    bool load_as_single_project = paths.size() ==1 && (ext_str == ".3mf" || ext_str == ".3MF");
-    if (in_new_project && load_as_single_project) {
-        load_project(paths.front(), EmptyProjectAction::Replace);
-        return;
-    }
-
-    if (in_new_project && !selected_project_is_empty()) {
-        new_project();
-    }
-    load_models_to_project(paths);
 }
 
 std::string ProjectInteractor::get_project_name(Domain::SelectionId project_id) const
@@ -1165,12 +1178,14 @@ void ProjectInteractor::set_output_extension(Domain::SelectionId project_id, con
     it->second.directory_storage().set_output_extension(extension);
 }
 
-void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::path> paths)
+void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::path> paths, bool temporary_sources)
 {
     // A single 3MF added to an empty project (the "Add" / "Import" button) is opened as a project, exactly like
     // "Open project": a 3MF written by another application then brings its colors and print settings and
     // starts on the printer with the most tool slots. Into a project that already has objects it is still added.
-    if (paths.size() == 1 && FileLoadingLogic::is_project_file(paths.front().string())
+    // Files extracted from an archive (temporary_sources) are deleted right after this call, so they are
+    // always imported directly: neither the project load nor the deferred OBJ import below could read them.
+    if (!temporary_sources && paths.size() == 1 && FileLoadingLogic::is_project_file(paths.front().string())
         && selected_project_is_empty()) {
         this->load_project(paths.front(), EmptyProjectAction::Replace);
         return;
@@ -1182,7 +1197,7 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
 
     // A single OBJ with several colors opened in an empty project with a single extruder starts a new
     // project on the printer with the most tool slots, like a 3MF written by another application.
-    if (paths.size() == 1 && selected_project_is_empty()) {
+    if (!temporary_sources && paths.size() == 1 && selected_project_is_empty()) {
         const auto& empty_project = m_workbench.project(selected_project_id());
         const Domain::BedRef empty_bed = scene_interactor().bed_selection().last_selected_bed();
         const Domain::ConfigContainer* empty_cc = empty_project.find_config_container(empty_bed.config_container_id);
@@ -1200,7 +1215,7 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
                         colored_project.imported_colors() = std::move(colors);
                         if (this->do_load_project(std::move(colored_project), {}).has_value())
                             this->remove_project(previous_project_id);
-                        this->import_models_into_selected_project(std::move(paths));
+                        this->import_models_into_selected_project(std::move(paths), false);
                     }
                 );
                 return;
@@ -1208,10 +1223,13 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
         }
     }
 
-    this->import_models_into_selected_project(std::move(paths));
+    this->import_models_into_selected_project(std::move(paths), temporary_sources);
 }
 
-void ProjectInteractor::import_models_into_selected_project(std::vector<boost::filesystem::path> paths)
+void ProjectInteractor::import_models_into_selected_project(
+    std::vector<boost::filesystem::path> paths,
+    bool temporary_sources
+)
 {
     const auto& proj            = m_workbench.project(selected_project_id());
     Domain::BedRef selected_bed = scene_interactor().bed_selection().last_selected_bed();
@@ -1244,14 +1262,16 @@ void ProjectInteractor::import_models_into_selected_project(std::vector<boost::f
         scene_interactor(),
         cc->bed().center() + Biz::Algorithms::Point::to_2d(inst.transformation.get_offset()),
         m_dialog_provider,
-        extruder_colors
+        FileLoadingLogic::ImportOptions{.temporary_sources = temporary_sources, .extruder_colors = std::move(extruder_colors)}
     );
 
     if (import_result.instances.empty()) {
         return;
     }
 
-    set_project_dir(selected_project_id(), paths.front());
+    if (!temporary_sources) {
+        set_project_dir(selected_project_id(), paths.front());
+    }
 
     arrange_interactor().arrange_added_instances(
         selected_project_id(),
@@ -1278,6 +1298,12 @@ Domain::SelectionId ProjectInteractor::add_config_container()
     initialize_bed(m_selection.project_id, id, p.bed_container());
 
     select_config_container(id);
+
+    invoke_listeners<IConfigContainerListChangedListener>(
+        [project_id = m_selection.project_id](auto* l)
+        { l->on_config_container_list_changed(project_id); }
+    );
+
     return id;
 }
 
@@ -1293,6 +1319,12 @@ Domain::SelectionId ProjectInteractor::insert_config_container(
         p.config_containers().begin() + position,
         std::move(config_container)
     )};
+
+    invoke_listeners<IConfigContainerListChangedListener>(
+        [project_id = m_selection.project_id](auto* l)
+        { l->on_config_container_list_changed(project_id); }
+    );
+
     auto& cc = **it;
     auto id = cc.id().id;
 
@@ -1335,6 +1367,11 @@ void ProjectInteractor::remove_config_container(Domain::SelectionId config_conta
 
     it = ccs.erase(it);
     scene_interactor().on_removed_config_container(project);
+
+    invoke_listeners<IConfigContainerListChangedListener>(
+        [project_id = m_selection.project_id](auto* l)
+        { l->on_config_container_list_changed(project_id); }
+    );
 }
 
 void ProjectInteractor::select_config_container(Domain::SelectionId container_id)

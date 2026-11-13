@@ -1,7 +1,6 @@
 #pragma once
 
 #include "Slic3r/App/Yoga/CollapsibleWindow.hpp"
-#include "Slic3r/Domain/SelectionId.hpp"
 #include <functional>
 
 namespace Slic3r::Biz {
@@ -23,37 +22,51 @@ namespace Yoga {
 class Text;
 class Rectangle;
 class LayoutButton;
-class Menu;
-class MenuItem;
 class ScrollArea;
 } // namespace Yoga
 
-class ObjectList;
-class Navigator;
+class ObjectListItem;
+class IShowContextMenuListener;
 
 class ObjectListWindow : public Yoga::CollapsibleWindow
 {
 public:
-    ObjectListWindow(Biz::ProjectInteractor* project_interactor, bool for_plater);
+    explicit ObjectListWindow(Biz::ProjectInteractor& project_interactor, bool for_plater);
     void update_sliced_info();
 
     void set_bed_instance_icons(const Plater::BedThumbnailTextures& icons);
     void set_gizmo_controller(Scene::IGizmoController* controller);
 
+    /**
+     * @brief Adds a listener showing the context menus requested by right-clicks on the object
+     * list rows.
+     */
+    void add_context_menu_listener(IShowContextMenuListener* listener);
+
+    /**
+     * @brief Shows the name editor on the row of the single selected object or volume. The window
+     * and the collapsed parents of the row are expanded, so the editor is visible.
+     */
+    void start_renaming_selected();
+
     std::function<void()> on_config_container_added{nullptr};
 
 private:
-    void init_cc_context_menu();
-
-private:
     Yoga::LayoutButton* m_add_container_button{nullptr};
-    Yoga::ScrollArea* m_scroll_area{nullptr};
-    ObjectList* m_object_list{nullptr};
+    ObjectListItem* m_object_list{nullptr};
 
     Yoga::Rectangle* m_sliced_info{nullptr};
 
-    Yoga::Text* m_used_material_label{nullptr};
-    Yoga::Text* m_used_material{nullptr};
+    Yoga::Text* m_used_material_total{nullptr};
+    Yoga::Item* m_used_material_for_objects_row{nullptr};
+    Yoga::Text* m_used_material_for_objects{nullptr};
+    Yoga::Item* m_used_material_for_wipe_tower_row{nullptr};
+    Yoga::Text* m_used_material_for_wipe_tower{nullptr};
+    Yoga::Item* m_used_material_for_flush_row{nullptr};
+    Yoga::Text* m_used_material_for_flush{nullptr};
+    Yoga::Item* m_used_material_for_supports_row{nullptr};
+    Yoga::Text* m_used_material_for_supports{nullptr};
+
     Yoga::Text* m_material_cost{nullptr};
     Yoga::Text* m_first_layer_time{nullptr};
     Yoga::Text* m_estimated_time{nullptr};
@@ -61,12 +74,10 @@ private:
     Yoga::Item* m_material_cost_row{nullptr};
     Yoga::Item* m_first_layer_time_row{nullptr};
 
-    Biz::ProjectInteractor* m_project_interactor{nullptr};
+    Biz::ProjectInteractor& m_project_interactor;
 
-    // context menu for config containers
-    Yoga::Menu* m_cc_context_menu{nullptr};
-    Yoga::MenuItem* m_delete_cc_menu_item{nullptr};
-    Domain::SelectionId m_selected_config_container_id{Domain::INVALID_ID};
+    // Not yet consumed by ObjectListItem; stored for when gizmo-triggering rows are ported.
+    Scene::IGizmoController* m_gizmo_controller{nullptr};
 };
 
 } // namespace Slic3r::App

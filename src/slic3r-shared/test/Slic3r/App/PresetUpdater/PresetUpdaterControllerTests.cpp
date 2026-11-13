@@ -97,10 +97,20 @@ bool updates_notification_shown()
     );
 }
 
+void close_updates_notification()
+{
+    AppServices::instance().pop_notification_center().close_notifications_of_type(
+        Slic3r::App::PopNotification::PopNotificationType::PresetUpdateAvailable
+    );
+}
+
 /// Member order matters: the controller is destroyed before the services it reports through.
 struct ControllerFixture : Fixture
 {
-    explicit ControllerFixture(bool with_timer_queue = false) :
+    explicit ControllerFixture(
+        bool with_timer_queue                             = false,
+        std::chrono::milliseconds periodic_check_interval = std::chrono::hours{6}
+    ) :
         Fixture("controller"),
         notification_center(project_interactor)
     {
@@ -109,9 +119,10 @@ struct ControllerFixture : Fixture
         }
 
         ControllerEnvironment environment;
-        environment.timer_queue    = timer_queue.has_value() ? &*timer_queue : nullptr;
-        environment.online_allowed = [this]() { return online; };
-        environment.request_render = [this]() { ++render_requests; };
+        environment.timer_queue             = timer_queue.has_value() ? &*timer_queue : nullptr;
+        environment.online_allowed          = [this]() { return online; };
+        environment.request_render          = [this]() { ++render_requests; };
+        environment.periodic_check_interval = periodic_check_interval;
 
         controller.emplace(interactor(), std::move(environment));
         controller->add_listener<IPresetUpdaterControllerListener>(&counter);
@@ -217,6 +228,172 @@ TEST_CASE("PresetUpdaterController runs the background check without narrating i
 
     REQUIRE(fx.settle());
     CHECK_FALSE(status_notification_shown());
+    CHECK(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController announces a new vendor only until the dialog has shown it", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->on_dialog_opened();
+    REQUIRE(fx.settle());
+    REQUIRE(fx.online_row().counts.new_vendors == 1);
+
+    REQUIRE(fx.pump([&fx]() { return fx.interactor().pending_job_count() == 0; }));
+
+    fx.controller->on_dialog_closed();
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+
+    CHECK_FALSE(updates_notification_shown());
+    CHECK(fx.online_row().counts.new_vendors == 1);
+}
+
+TEST_CASE("PresetUpdaterController checks again once the interval has passed", "[preset_updater][controller]")
+{
+    ControllerFixture fx(true, 50ms);
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+
+    REQUIRE(fx.pump([&fx]() { return fx.controller->activity() == ControllerActivity::Checking; }));
+}
+
+TEST_CASE("PresetUpdaterController checks periodically only while it may work online", "[preset_updater][controller]")
+{
+    ControllerFixture fx(true, 50ms);
+    fx.online = false;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+
+    const auto checking = [&fx]()
+    { return fx.controller->activity() == ControllerActivity::Checking; };
+    CHECK_FALSE(fx.pump(checking, 1s));
+
+    fx.online = true;
+    fx.controller->on_online_allowed_changed();
+    REQUIRE(checking());
+
+    REQUIRE(fx.settle());
+    REQUIRE(fx.pump(checking));
+}
+
+TEST_CASE("PresetUpdaterController checks again when the user logs in", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+
+    fx.controller->on_logged_in();
+    REQUIRE(fx.controller->activity() == ControllerActivity::Checking);
+
+    REQUIRE(fx.settle());
+    CHECK(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController supersedes a check running when the user logs in", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.controller->activity() == ControllerActivity::Checking);
+
+    fx.controller->on_logged_in();
+    REQUIRE(fx.controller->activity() == ControllerActivity::Checking);
+
+    REQUIRE(fx.settle());
+    CHECK_FALSE(fx.controller->warned());
+    CHECK(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController does not check on login while it may not work online", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.online = false;
+    fx.put_server("100");
+
+    fx.controller->on_logged_in();
+    CHECK(fx.controller->activity() == ControllerActivity::None);
+}
+
+TEST_CASE("PresetUpdaterController checks again when the user logs out", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+
+    fx.controller->on_logged_out();
+    REQUIRE(fx.controller->activity() == ControllerActivity::Checking);
+    REQUIRE(fx.settle());
+}
+
+TEST_CASE("PresetUpdaterController announces nothing for the check a logout starts", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+    REQUIRE(updates_notification_shown());
+    close_updates_notification();
+
+    fx.controller->on_logged_out();
+    REQUIRE(fx.settle());
+    CHECK_FALSE(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController stays quiet when a login brings nothing new", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+    REQUIRE(updates_notification_shown());
+    close_updates_notification();
+
+    fx.controller->on_logged_in();
+    REQUIRE(fx.settle());
+    CHECK_FALSE(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController announces what appeared with the login", "[preset_updater][controller]")
+{
+    ControllerFixture fx;
+    fx.online = false;
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+    REQUIRE_FALSE(updates_notification_shown());
+
+    fx.online = true;
+    fx.controller->on_logged_in();
+    REQUIRE(fx.settle());
+    CHECK(updates_notification_shown());
+}
+
+TEST_CASE("PresetUpdaterController announces pending offers again at the periodic check", "[preset_updater][controller]")
+{
+    ControllerFixture fx(true, 50ms);
+    fx.put_server("100");
+
+    fx.controller->start_background_check();
+    REQUIRE(fx.settle());
+    REQUIRE(updates_notification_shown());
+    close_updates_notification();
+
+    REQUIRE(fx.pump([&fx]() { return fx.controller->activity() == ControllerActivity::Checking; }));
+    REQUIRE(fx.settle());
     CHECK(updates_notification_shown());
 }
 
@@ -383,7 +560,7 @@ TEST_CASE("PresetUpdaterController installs everything on offer", "[preset_updat
     CHECK(row.counts.pending() == 0);
     REQUIRE(row.vendors->size() == 1);
     CHECK(row.vendors->at(0).install_state == InstallState::Done);
-    CHECK(row.vendors->at(0).error_text.empty());
+    CHECK_FALSE(row.vendors->at(0).failure_reason.has_value());
 
     const fs::path installed_vendor_dir = fx.installed_path / k_repo_name / k_vendor_name;
     CHECK(fs::exists(installed_vendor_dir / "vendor.yaml"));

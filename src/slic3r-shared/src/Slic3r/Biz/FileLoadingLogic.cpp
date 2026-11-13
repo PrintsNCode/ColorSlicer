@@ -40,6 +40,8 @@
 #include <map>
 #include <fmt/format.h>
 
+using Slic3r::Biz::Algorithms::ModelObject::add_volume;
+
 namespace Slic3r::Biz::FileLoadingLogic {
 
 static constexpr const double volume_threshold_inches = 9.0; // 9 = 3*3*3;
@@ -52,7 +54,9 @@ struct ReturnData
     boost::filesystem::path file_path;
     std::optional<Domain::TriangleMesh> mesh;
     std::optional<Domain::Model> model;
-    bool geometry_only_3mf = false;
+    bool geometry_only_3mf        = false;
+    bool is_converted_from_inches = false;
+    bool is_converted_from_meters = false;
     // Colors of a 3MF written by another application, see Loaded3MF::file_colors.
     std::vector<Format::ColorImport::Rgba> file_colors;
     // Colors of an OBJ (vertex colors / materials). Turned into a painted model once the mesh is processed.
@@ -201,13 +205,14 @@ struct StepLoadingMultiple
 };
 
 static void process_mesh(
-    TriangleMesh& mesh,
-    const std::string& input_file,
+    ReturnData& file_data,
     Answer* answer_convert_from_meters,
     Answer* answer_convert_from_imperial_units,
     IMessageDialogProvider* dialog_provider
 )
 {
+    TriangleMesh& mesh             = file_data.mesh.value();
+    const std::string& input_file  = file_data.file_name;
     const TriangleMeshStats& stats = mesh.stats();
 
     if (looks_like_saved_in_meters(stats)) {
@@ -217,6 +222,7 @@ static void process_mesh(
                 dialog_provider->show_rich_yesno_dialog(
                     _u8L("The object is too small"),
                     fmt::vformat(
+                        // TRN {} is the name of the loaded file
                         _u8L(
                             "The dimensions of the object from file {} seem to be defined in meters.\n"
                             "The internal unit of PrusaSlicer is a millimeter. Do you want to recalculate the dimensions of the object?"
@@ -234,10 +240,10 @@ static void process_mesh(
                 );
             }
         }
+
         if (answer == Answer::Yes) {
             convert_from_meters(mesh);
-            // TODO: How to put this information?
-            // volume->source.is_converted_from_meters = true;
+            file_data.is_converted_from_meters = true;
         }
     } else if (looks_like_imperial_units(stats)) {
         Answer answer = answer_convert_from_imperial_units ? *answer_convert_from_imperial_units :
@@ -249,6 +255,7 @@ static void process_mesh(
                 dialog_provider->show_rich_yesno_dialog(
                     _u8L("The object is too small"),
                     fmt::vformat(
+                        // TRN {} is the name of the loaded file
                         _u8L(
                             "The dimensions of the object from file {} seem to be defined in inches.\n"
                             "The internal unit of PrusaSlicer is a millimeter. Do you want to recalculate the dimensions of the object?"
@@ -266,10 +273,10 @@ static void process_mesh(
                 );
             }
         }
+
         if (answer == Answer::Yes) {
             convert_from_imperial_units(mesh);
-            // TODO: How to put this information?
-            // volume->source.is_converted_from_inches = true;
+            file_data.is_converted_from_inches = true;
         }
     }
 }
@@ -453,6 +460,9 @@ void fix_volume_transformation(ModelVolume& volume) {
     volume.set_transformation(volume.get_matrix() * mesh_trafo.inverse());
     volume.set_mesh(std::move(mesh));
     Algorithms::ModelVolume::calculate_convex_hull(volume);
+    // The SLA points and holes are in mesh coordinates.
+    Domain::SLA::transform(volume.sla_support_points, mesh_trafo);
+    Domain::SLA::transform(volume.sla_drain_holes, mesh_trafo);
 
     // data for fix transformation is not useable anymore
     fix_opt.reset();
@@ -600,6 +610,7 @@ static Loaded3MF load_legacy_project(const std::string& file_path, OptionalPrese
 
     auto& config_pack = loaded_3mf.config_containers_data.back().config_pack;
     LegacyPresetMetadata hw_printer;
+    std::string error_message;
     if (!Slic3rLegacy::load_3mf_legacy(
             file_path.c_str(),
             config_pack,
@@ -609,11 +620,13 @@ static Loaded3MF load_legacy_project(const std::string& file_path, OptionalPrese
             loaded_3mf.version,
             loaded_3mf.config_containers_data.back().wipe_towers,
             loaded_3mf.config_containers_data.back().custom_gcodes,
-            loaded_3mf.config_containers_data.back().virtual_extruders_config
+            loaded_3mf.config_containers_data.back().virtual_extruders_config,
+            &error_message
         ))
-        throw Loaded3MFException(
-            Read3mfIssue(Read3mfIssueType::legacy_loader_failed, "Loading of legacy 3MF failed.")
-        );
+        throw Loaded3MFException(Read3mfIssue(
+            Read3mfIssueType::legacy_loader_failed,
+            error_message.empty() ? _u8L("Loading of legacy 3MF failed.") : error_message
+        ));
 
     // The old slicer did not store HW configuration in the current sense. We must heuristically
     // construct a meaningful SelectedPresetMetadata here by doing something like
@@ -704,6 +717,8 @@ static std::string skipped_painting_warning_text(const Read3mfIssues& issues)
 
     return fmt::vformat(
         _u8L(
+            // TRN {} is a comma-separated list of the skipped painting types
+            // (e.g. "fuzzy skin, seam")
             "Some painting in the 3MF file was created with a newer, unsupported version of "
             "PrusaSlicer and was not loaded: {}. The geometry was loaded without it."
         ),
@@ -821,6 +836,7 @@ static tl::expected<ReturnData, FileLoadError> read_data_from_file(
             if (loaded_3mf.model.objects.empty()) {
                 return tl::make_unexpected(FileLoadError::error(
                     fmt::vformat(
+                        // TRN {} is the name of the loaded 3MF file
                         _u8L("Model from {} couldn't be read because it's empty"),
                         fmt::make_format_args(ret.file_name)
                     )
@@ -843,53 +859,62 @@ static tl::expected<ReturnData, FileLoadError> read_data_from_file(
         } catch (const Loaded3MFException& e) {
             return tl::make_unexpected(FileLoadError::error(
                 fmt::vformat(
+                    // TRN 1st {} is the name of the 3MF file, 2nd {} is the error message
                     _u8L("Failed to load model from 3MF file {}. {}"),
                     fmt::make_format_args(ret.file_name, e.issue.msg)
                 )
             ));
         }
     } else if (is_step) {
-        Biz::Platform::IAppConfigProvider& app_config = Platform::PlatformServices::instance().app_config_provider();
-        double linear_precision = app_config.get_step_linear_precision();
-        double angle_precision = app_config.get_step_angle_precision();
-        bool show_dialog = app_config.get_show_step_import_parameters();
+        Platform::PlatformServices& platform_services = Platform::PlatformServices::instance();
 
-        // Check if we should skip the dialog because "Apply to all" was clicked on a previous file
-        if (step_loading_multiple && step_loading_multiple->dismiss) {
-            linear_precision = step_loading_multiple->linear_precision;
-            angle_precision = step_loading_multiple->angle_precision;
-            show_dialog = false;
+        std::optional<std::pair<double, double>> step_linear_and_angle_deflections;
+        if (platform_services.has_app_config_provider()) {
+            Biz::Platform::IAppConfigProvider& app_config = platform_services.app_config_provider();
+            double linear_precision = app_config.get_step_linear_precision();
+            double angle_precision = app_config.get_step_angle_precision();
+            bool show_dialog = app_config.get_show_step_import_parameters();
+
+            // Check if we should skip the dialog because "Apply to all" was clicked on a previous file
+            if (step_loading_multiple && step_loading_multiple->dismiss) {
+                linear_precision = step_loading_multiple->linear_precision;
+                angle_precision = step_loading_multiple->angle_precision;
+                show_dialog = false;
+            }
+
+            if (show_dialog && dialog_provider != nullptr) {
+                auto dialog_result = dialog_provider->show_load_step_dialog(
+                    input_file_path.filename().string(),
+                    linear_precision,
+                    angle_precision,
+                    step_loading_multiple != nullptr  // Show "Apply to all" button only when loading multiple files
+                );
+                if (!dialog_result)
+                {
+                    // User cancelled the dialog
+                    return tl::make_unexpected(FileLoadError::cancelled());
+                }
+
+                linear_precision = dialog_result->linear_precision;
+                angle_precision = dialog_result->angle_precision;
+                if (dialog_result->do_not_show_again) {
+                    app_config.set_show_step_import_parameters(false);
+                }
+                app_config.set_step_linear_precision(linear_precision);
+                app_config.set_step_angle_precision(angle_precision);
+
+                // If "Apply to all" was clicked, store the values and suppress dialog for remaining files
+                if (dialog_result->apply_to_all && step_loading_multiple) {
+                    step_loading_multiple->linear_precision = linear_precision;
+                    step_loading_multiple->angle_precision = angle_precision;
+                    step_loading_multiple->dismiss = true;
+                }
+            }
+
+            step_linear_and_angle_deflections = std::make_pair(linear_precision, angle_precision);
         }
 
-        if (show_dialog && dialog_provider != nullptr) {
-            auto dialog_result = dialog_provider->show_load_step_dialog(
-                input_file_path.filename().string(),
-                linear_precision,
-                angle_precision,
-                step_loading_multiple != nullptr  // Show "Apply to all" button only when loading multiple files
-            );
-            if (!dialog_result)
-            {
-                // User cancelled the dialog
-                return tl::make_unexpected(FileLoadError::cancelled());
-            }
-
-            linear_precision = dialog_result->linear_precision;
-            angle_precision = dialog_result->angle_precision;
-            if (dialog_result->do_not_show_again) {
-                app_config.set_show_step_import_parameters(false);
-            }
-            app_config.set_step_linear_precision(linear_precision);
-            app_config.set_step_angle_precision(angle_precision);
-
-            // If "Apply to all" was clicked, store the values and suppress dialog for remaining files
-            if (dialog_result->apply_to_all && step_loading_multiple) {
-                step_loading_multiple->linear_precision = linear_precision;
-                step_loading_multiple->angle_precision = angle_precision;
-                step_loading_multiple->dismiss = true;
-            }
-        }
-        auto out = load_step(input_file_path.string(), std::make_pair(linear_precision, angle_precision));
+        auto out = load_step(input_file_path.string(), step_linear_and_angle_deflections);
         if (out) {
             ret.model = std::move(out.value());
             return ret;
@@ -934,14 +959,14 @@ static tl::expected<ReturnData, FileLoadError> read_and_process_file(
         if (has_zero_volume(mesh.stats())) {
             return tl::make_unexpected(FileLoadError::error(
                 fmt::vformat(
+                    // TRN {} is the name of the loaded file
                     _u8L("Mesh from file {} has zero volume. It will not be loaded."),
                     fmt::make_format_args(file_name)
                 )
             ));
         }
         process_mesh(
-            mesh,
-            file_name,
+            data.value(),
             answer_convert_from_meters,
             answer_convert_from_imperial_units,
             dialog_provider
@@ -982,7 +1007,7 @@ static std::vector<ReturnData> import_files(
         // the files are intended for multi-tool printers.
         bool can_convert_to_multipart = input_file_paths.size() > 1 && tool_count > 1;
         for (const auto& path : input_file_paths) {
-            if (path.extension().string() == "3mf") {
+            if (boost::algorithm::iequals(path.extension().string(), ".3mf")) {
                 // To avoid mishmash we don't allow to any changes,
                 // if we load some 3mf during multiple files import
                 can_convert_to_multipart = false;
@@ -1017,7 +1042,10 @@ static std::vector<ReturnData> import_files(
                 ModelObject* new_object = extra_model->add_object();
                 new_object->name        = path.filename().string();
                 new_object->input_file  = path.string();
-                Algorithms::ModelObject::add_volume(new_object, data.value().mesh.value());
+
+                ModelVolume* new_volume = add_volume(new_object, data.value().mesh.value());
+                new_volume->source.is_converted_from_inches = data.value().is_converted_from_inches;
+                new_volume->source.is_converted_from_meters = data.value().is_converted_from_meters;
             } else {
                 ret.emplace_back(data.value());
             }
@@ -1054,10 +1082,14 @@ static std::vector<ReturnData> import_files(
         if (!convert) {
             // Otherwise we need to return the separate meshes
             for (const ModelObject* object : extra_model->objects) {
+                const ModelVolume& volume = *object->volumes.front();
+
                 ReturnData data;
-                data.file_name = object->name;
-                data.file_path = object->input_file;
-                data.mesh      = object->volumes.front()->mesh();
+                data.file_name                = object->name;
+                data.file_path                = object->input_file;
+                data.mesh                     = volume.mesh();
+                data.is_converted_from_inches = volume.source.is_converted_from_inches;
+                data.is_converted_from_meters = volume.source.is_converted_from_meters;
                 ret.emplace_back(data);
             }
         }
@@ -1151,6 +1183,7 @@ static Project convert_to_project(Loaded3MF&& loaded_3mf, IMessageDialogProvider
         auto& mutable_selected_preset = cc.mutable_selected_preset();
         mutable_selected_preset =
             Domain::Preset::SelectedPreset::make(cc_data.preset, cc_data.config_pack);
+        cc.physical_printer_selection() = cc_data.physical_printer;
 
         if (const auto& fdm_config_pack = std::get_if<Domain::ConfigPackFDM>(&cc_data.config_pack)) {
             cc.project_settings() = fdm_config_pack->project;
@@ -1163,7 +1196,7 @@ static Project convert_to_project(Loaded3MF&& loaded_3mf, IMessageDialogProvider
                 );
             }
         } else if (const auto& sla_config_pack = std::get_if<Domain::ConfigPackSLA>(&cc_data.config_pack)) {
-            // TODO: cc.project_settings() = sla_config_pack->project;
+            cc.sla_project_settings() = sla_config_pack->sla_project_settings;
         } else {
             PANIC("Unhandled variant of config pack");
         }
@@ -1303,13 +1336,36 @@ void apply_imported_colors(Domain::Project& project, Domain::ConfigContainer& co
 }
 
 namespace {
-std::optional<ModelVolume::Source> volume_source_from_path(const boost::filesystem::path& file_path)
+std::optional<ModelVolume::Source> volume_source_from_file_data(const ReturnData& file_data)
 {
-    if (file_path.empty()) {
+    if (file_data.file_path.empty()) {
         return std::nullopt;
     }
 
-    return ModelVolume::Source{.input_file = file_path.string(), .object_idx = 0, .volume_idx = 0};
+    return ModelVolume::Source{
+        .input_file               = file_data.file_path.string(),
+        .object_idx               = 0,
+        .volume_idx               = 0,
+        .is_converted_from_inches = file_data.is_converted_from_inches,
+        .is_converted_from_meters = file_data.is_converted_from_meters
+    };
+}
+
+void forget_source_paths(ReturnData& file_data)
+{
+    file_data.file_path.clear();
+    if (!file_data.model) {
+        return;
+    }
+    for (Domain::ModelObject* object : file_data.model->objects) {
+        object->input_file.clear();
+        for (Domain::ModelVolume* volume : object->volumes) {
+            volume->source.input_file.clear();
+            if (volume->emboss_shape && volume->emboss_shape->svg_file) {
+                volume->emboss_shape->svg_file->path.clear();
+            }
+        }
+    }
 }
 } // namespace
 
@@ -1319,7 +1375,7 @@ ImportToSceneResult import_files_and_add_to_scene(
     Scene::SceneInteractor& scene_interactor,
     const Domain::Vec2d& bed_center,
     IMessageDialogProvider* dialog_provider,
-    const std::vector<std::string>& extruder_colors
+    const ImportOptions& options
 )
 {
     auto data = Biz::FileLoadingLogic::import_files(file_paths, dialog_provider, tool_count);
@@ -1328,6 +1384,9 @@ ImportToSceneResult import_files_and_add_to_scene(
     ElementRefs& added_instances = result.instances;
     for (Biz::FileLoadingLogic::ReturnData& file_data : data) {
         result.geometry_only_3mf |= file_data.geometry_only_3mf;
+        if (options.temporary_sources) {
+            forget_source_paths(file_data);
+        }
 
         Domain::BoundingBox3d bbox;
         ElementRefs new_instances;
@@ -1337,7 +1396,7 @@ ImportToSceneResult import_files_and_add_to_scene(
             new_instances = scene_interactor.new_object_from_mesh(
                 std::move(file_data.mesh.value()),
                 file_data.file_name,
-                volume_source_from_path(file_data.file_path)
+                volume_source_from_file_data(file_data)
             );
         } else if (file_data.model) {
             Domain::Model& model = file_data.model.value();
@@ -1346,7 +1405,7 @@ ImportToSceneResult import_files_and_add_to_scene(
                     model,
                     map_colors_to_extruders(
                         file_data.file_colors,
-                        extruder_colors,
+                        options.extruder_colors,
                         static_cast<std::size_t>(std::max(tool_count, 1))
                     )
                 );
@@ -1398,7 +1457,7 @@ void import_volumes_into_selected_object(
                 volume_type,
                 file_data.file_name,
                 SquareMatrix4d::Identity(),
-                volume_source_from_path(file_data.file_path)
+                volume_source_from_file_data(file_data)
             );
         } else if (file_data.model) {
             Domain::Model& model = file_data.model.value();
@@ -1450,13 +1509,22 @@ read_model_from_file(const std::string& input_file, IMessageDialogProvider* dial
         ModelVolume* new_volume =
             Algorithms::ModelObject::add_volume(new_object, processed_file.value().mesh.value());
         new_volume->name   = input_file_path.filename().string();
-        new_volume->source = volume_source_from_path(input_file_path).value();
+        new_volume->source = volume_source_from_file_data(processed_file.value()).value();
         model.add_default_instances();
     } else {
         return tl::make_unexpected(_u8L("There is no data for either the mesh or the model."));
     }
 
     return model;
+}
+
+void apply_unit_conversion_from_source(TriangleMesh& mesh, const ModelVolume::Source& source)
+{
+    if (source.is_converted_from_meters) {
+        convert_from_meters(mesh);
+    } else if (source.is_converted_from_inches) {
+        convert_from_imperial_units(mesh);
+    }
 }
 
 const std::vector<std::string>& get_import_extensions()
@@ -1483,6 +1551,11 @@ bool is_supported_file(const std::string& input_file)
             return true;
     }
     return false;
+}
+
+bool is_archive_file(const std::string& input_file)
+{
+    return boost::algorithm::iends_with(input_file, ".zip");
 }
 
 } // namespace Slic3r::Biz::FileLoadingLogic

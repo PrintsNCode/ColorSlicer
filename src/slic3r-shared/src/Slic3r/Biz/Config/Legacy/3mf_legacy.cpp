@@ -21,7 +21,10 @@
 #include <boost/bimap.hpp>
 #include <boost/filesystem.hpp>
 
+#include <exception>
+
 #include <boost/algorithm/string/split.hpp>
+#include <boost/algorithm/string/join.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/spirit/include/karma.hpp>
 #include <boost/spirit/include/qi_int.hpp>
@@ -44,6 +47,7 @@ namespace pt = boost::property_tree;
 
 #include "Slic3r/Biz/Algorithms/Geometry/Geometry.hpp"
 #include "Slic3r/Biz/Algorithms/ModelObject.hpp"
+#include "Slic3r/Biz/Algorithms/SlaPoints.hpp"
 #include "Slic3r/Biz/Algorithms/TriangleMesh.hpp"
 #include "Slic3r/Biz/Config/ConfigLegacy.hpp"
 #include "Slic3r/Biz/Config/Legacy/PrintConfig.hpp"
@@ -567,6 +571,8 @@ namespace Slic3rLegacy {
         void clear_errors() { m_errors.clear(); }
 
     public:
+        const std::vector<std::string>& errors() const { return m_errors; }
+
         void log_errors()
         {
             for (const std::string& error : m_errors)
@@ -964,7 +970,16 @@ namespace Slic3rLegacy {
         m_start_part_path = MODEL_FILE; // set default value for invalid .rel file
         clear_errors();
 
-        return _load_model_from_file(filename, model, config, preset_metadata, config_substitutions, wipe_towers, custom_gcodes, out_virtual_extruders_config);
+        return _load_model_from_file(
+            filename,
+            model,
+            config,
+            preset_metadata,
+            config_substitutions,
+            wipe_towers,
+            custom_gcodes,
+            out_virtual_extruders_config
+        );
     }
 
     void _3MF_Importer::_destroy_xml_parser()
@@ -1222,17 +1237,6 @@ namespace Slic3rLegacy {
             if (obj_layer_config_ranges != m_layer_config_ranges.end())
                 model_object->layer_config_ranges = std::move(obj_layer_config_ranges->second);
 
-            // m_sla_support_points are indexed by a 1 based model object index.
-            IdToSlaSupportPointsMap::iterator obj_sla_support_points = m_sla_support_points.find(object.second + 1);
-            if (obj_sla_support_points != m_sla_support_points.end() && !obj_sla_support_points->second.empty()) {
-                model_object->sla_support_points = std::move(obj_sla_support_points->second);
-                model_object->sla_points_status = PointsStatus::UserModified;
-            }
-
-            IdToSlaDrainHolesMap::iterator obj_drain_holes = m_sla_drain_holes.find(object.second + 1);
-            if (obj_drain_holes != m_sla_drain_holes.end() && !obj_drain_holes->second.empty()) {
-                model_object->sla_drain_holes = std::move(obj_drain_holes->second);
-            }
 
             ObjectMetadata::VolumeMetadataList volumes;
             ObjectMetadata::VolumeMetadataList* volumes_ptr = nullptr;
@@ -1271,6 +1275,22 @@ namespace Slic3rLegacy {
 
             if (!_generate_volumes(*model_object, obj_geometry->second, *volumes_ptr, config_substitutions))
                 return false;
+
+            // The SLA points and holes are in object coordinates, they go to the volumes they sit on.
+            // The volumes have identity matrices and meshes in object coordinates at this point, so
+            // the points follow when the instance transformation is baked into the volumes later.
+            // m_sla_support_points are indexed by a 1 based model object index.
+            IdToSlaSupportPointsMap::iterator obj_sla_support_points = m_sla_support_points.find(object.second + 1);
+            if (obj_sla_support_points != m_sla_support_points.end() && !obj_sla_support_points->second.empty()) {
+                Biz::Algorithms::SlaPoints::set_support_points_in_object(*model_object, obj_sla_support_points->second);
+                if (Biz::Algorithms::SlaPoints::has_support_points(*model_object))
+                    model_object->sla_points_status = PointsStatus::UserModified;
+            }
+
+            IdToSlaDrainHolesMap::iterator obj_drain_holes = m_sla_drain_holes.find(object.second + 1);
+            if (obj_drain_holes != m_sla_drain_holes.end() && !obj_drain_holes->second.empty()) {
+                Biz::Algorithms::SlaPoints::set_drain_holes_in_object(*model_object, obj_drain_holes->second);
+            }
 
             // Apply cut information for object if any was loaded
             // m_cut_object_ids are indexed by a 1 based model object index.
@@ -1411,35 +1431,54 @@ namespace Slic3rLegacy {
             XML_Parser& parser;
             _3MF_Importer& importer;
             const mz_zip_archive_file_stat& stat;
+            std::string error;
+            std::exception_ptr exception;
 
             CallbackData(XML_Parser& parser, _3MF_Importer& importer, const mz_zip_archive_file_stat& stat) : parser(parser), importer(importer), stat(stat) {}
         };
 
         CallbackData data(m_xml_parser, *this, stat);
 
-        mz_bool res = 0;
-
-        try
-        {
-            res = mz_zip_reader_extract_to_callback(&archive, stat.m_file_index, [](void* pOpaque, mz_uint64 file_ofs, const void* pBuf, size_t n)->size_t {
-                CallbackData* data = (CallbackData*)pOpaque;
+        // The callback is called from miniz, which is C code. Exceptions must not be thrown through it:
+        // the compiler may assume that miniz functions do not throw (e.g. with LTO) and optimize away
+        // the exception handlers around the call. The callback therefore stores the error and returns 0,
+        // which makes miniz abort the extraction.
+        const mz_bool res = mz_zip_reader_extract_to_callback(&archive, stat.m_file_index, [](void* pOpaque, mz_uint64 file_ofs, const void* pBuf, size_t n)->size_t {
+            CallbackData* data = (CallbackData*)pOpaque;
+            try {
                 if (!XML_Parse(data->parser, (const char*)pBuf, (int)n, (file_ofs + n == data->stat.m_uncomp_size) ? 1 : 0) || data->importer.parse_error()) {
                     char error_buf[1024];
                     ::sprintf(error_buf, "Error (%s) while parsing '%s' at line %d", data->importer.parse_error_message(), data->stat.m_filename, (int)XML_GetCurrentLineNumber(data->parser));
-                    throw Slic3r::FileIOError(error_buf);
+                    data->error = error_buf;
+                    return 0;
                 }
+            } catch (...) {
+                // E.g. version_error thrown by the XML handlers.
+                data->exception = std::current_exception();
+                return 0;
+            }
 
-                return n;
-                }, &data, 0);
+            return n;
+            }, &data, 0);
+
+        if (data.exception) {
+            try {
+                std::rethrow_exception(data.exception);
+            }
+            catch (const version_error& e)
+            {
+                // rethrow the exception
+                throw Slic3r::FileIOError(e.what());
+            }
+            catch (std::exception& e)
+            {
+                add_error(e.what());
+                return false;
+            }
         }
-        catch (const version_error& e)
-        {
-            // rethrow the exception
-            throw Slic3r::FileIOError(e.what());
-        }
-        catch (std::exception& e)
-        {
-            add_error(e.what());
+
+        if (! data.error.empty()) {
+            add_error(data.error);
             return false;
         }
 
@@ -1943,6 +1982,9 @@ namespace Slic3rLegacy {
         return Format::VirtualExtruder::deserialize_virtual_extruders_from_json(buffer);
     }
 
+    // PrusaSlicer 2.9 supported at most this many beds and its importer ignored higher bed_idx values.
+    static constexpr int LEGACY_MAX_NUMBER_OF_BEDS = 9;
+
     Slic3r::Domain::CustomGCodesOnBeds _3MF_Importer::_extract_custom_gcode_per_print_z_from_archive(::mz_zip_archive &archive, const mz_zip_archive_file_stat &stat)
     {
         if (stat.m_uncomp_size <= 0) {
@@ -1973,6 +2015,10 @@ namespace Slic3rLegacy {
             } catch (const boost::property_tree::ptree_bad_path&) {
                 // Probably an old project with no bed_idx info. Imagine that we saw 0.
             }
+            // Not a security issue (the result is a map, not a fixed-size vector as in 2.9),
+            // just ignore indices that PrusaSlicer 2.9 could not have written.
+            if (bed_idx < 0 || bed_idx >= LEGACY_MAX_NUMBER_OF_BEDS)
+                continue;
 
             pt::ptree code_tree = bed_block.second;
 
@@ -2049,6 +2095,10 @@ namespace Slic3rLegacy {
                 } catch (const boost::property_tree::ptree_bad_path&) {
                     // Probably an old project with no bed_idx info - pretend that we saw 0.
                 }
+                // Not a security issue (the result is a map, not a fixed-size vector as in 2.9),
+                // just ignore indices that PrusaSlicer 2.9 could not have written.
+                if (bed_idx < 0 || bed_idx >= LEGACY_MAX_NUMBER_OF_BEDS)
+                    continue;
                 double pos_x = bed_block.second.get<double>("<xmlattr>.position_x");
                 double pos_y = bed_block.second.get<double>("<xmlattr>.position_y");
                 double rot_deg = bed_block.second.get<double>("<xmlattr>.rotation_deg");
@@ -3971,7 +4021,7 @@ namespace Slic3rLegacy {
         unsigned int count = 0;
         for (const Domain::ModelObject* object : model.objects) {
             ++count;
-            const std::vector<SupportPoint>& sla_support_points = object->sla_support_points;
+            const std::vector<SupportPoint> sla_support_points = Biz::Algorithms::SlaPoints::support_points_in_object(*object);
             if (!sla_support_points.empty()) {
                 sprintf(buffer, "object_id=%d|", count);
                 out += buffer;
@@ -4018,7 +4068,7 @@ namespace Slic3rLegacy {
         unsigned int count = 0;
         for (const Domain::ModelObject* object : model.objects) {
             ++count;
-            Domain::SLA::DrainHoles drain_holes = object->sla_drain_holes;
+            Domain::SLA::DrainHoles drain_holes = Biz::Algorithms::SlaPoints::drain_holes_in_object(*object);
 
             // The holes were placed 1mm above the mesh in the first implementation.
             // This was a bad idea and the reference point was changed in 2.3 so
@@ -4793,7 +4843,8 @@ bool load_3mf_legacy(
     boost::optional<Semver> &prusaslicer_generator_version,
     Slic3r::Domain::WipeTowersOnBeds& wipe_towers,
     Slic3r::Domain::CustomGCodesOnBeds& custom_gcodes,
-    VirtualExtrudersConfig& out_virtual_extruders_config
+    VirtualExtrudersConfig& out_virtual_extruders_config,
+    std::string* error_message
 )
 {
     // This is set here for the legacy loading. It used to be an argument.
@@ -4807,6 +4858,8 @@ bool load_3mf_legacy(
     Slic3rLegacy::_3MF_Importer         importer;
     bool res = importer.load_model_from_file(path, *model, config, preset_metadata, config_substitutions, check_version, wipe_towers, custom_gcodes, out_virtual_extruders_config);
     importer.log_errors();
+    if (!res && error_message != nullptr)
+        *error_message = boost::algorithm::join(importer.errors(), "\n");
     prusaslicer_generator_version = importer.prusaslicer_generator_version();
 
     return res;

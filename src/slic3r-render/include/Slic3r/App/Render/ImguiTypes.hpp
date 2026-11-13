@@ -19,6 +19,7 @@ enum class Icon : wchar_t
     WarningMarkerWhite,
     ErrorMarker,
     RevertButton,
+    EffectiveValueInfo,
 
     // Do not forget use following letters only in wstring
     ClippyMarker,
@@ -89,6 +90,7 @@ enum class Icon : wchar_t
     // Gizmo Paint-on-Supports
     Triangle,
     Circle,
+    CircleFull,
     Square,
     Hexagon,
     Sphere,
@@ -222,6 +224,12 @@ enum class Icon : wchar_t
     PhysicalPrinterIcon,
     CheckMark,
     Robot,
+    Primary,
+    PrintGoals,
+    ExtruderAssignment,
+
+    // PNGs
+    SpoolBig,
 
     // FontIconS
     // DO NOT TOUCH, DO NOT CHANGE ORDER

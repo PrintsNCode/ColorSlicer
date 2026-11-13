@@ -2,6 +2,7 @@
 
 #include <Slic3r/Domain/Config.hpp>
 
+#include "Slic3r/App/Navigator.hpp"
 #include "Slic3r/Biz/I18N/I18N.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 #include "Slic3r/Biz/Algorithms/Color.hpp"
@@ -170,7 +171,12 @@ void PrintToolRowItem::on_colors_changed(
 
 void PrintToolRowItem::on_view_will_be_reset()
 {
-    m_tool_overrides.clear();
+    clear();
+}
+
+void PrintToolRowItem::on_view_will_be_removed()
+{
+    clear();
 }
 
 void PrintToolRowItem::on_preset_selection_changed(
@@ -272,6 +278,7 @@ void PrintToolRowItem::on_data_update()
         // update values | create new ones
         const std::vector<Domain::ColorRGB> colors =
             m_project_interactor.project_settings_interactor().get_colors(
+                m_project_interactor.selected_project_id(),
                 m_project_interactor.selected_config_container_id()
             );
 
@@ -357,9 +364,24 @@ void PrintToolRowItem::on_data_update()
         if ((need_presort || m_tool_overrides.empty()) && !m_overrides.empty()) {
             presort_overrides();
         }
+
+        if (m_state->effective_value_status == Biz::EffectiveValueStatus::Overriden) {
+            m_effective_value_info->set_icon(Render::Icon::WarningMarkerWhite);
+            m_effective_value_info->set_tooltip(Biz::_u8L("See why is the value unused!"));
+            m_effective_value_info->set_background_color(Platform::Color::AccentPrimary);
+            m_effective_value_info->set_width(25_fpx);
+            m_effective_value_info->set_height(25_fpx);
+        } else {
+            m_effective_value_info->set_icon(Render::Icon::EffectiveValueInfo);
+            m_effective_value_info->set_tooltip(Biz::_u8L("More info"));
+            m_effective_value_info->set_background_color(Platform::Color::Button);
+            m_effective_value_info->set_width(20_fpx);
+            m_effective_value_info->set_height(20_fpx);
+        }
     }
 
     if (m_config_row_item) {
+        m_config_row_item->set_effective_value_status(m_state->effective_value_status);
         m_config_row_item->set_state(*m_state->print_item);
     }
 
@@ -378,6 +400,7 @@ void PrintToolRowItem::clear()
         m_content     = nullptr;
         m_main_button = nullptr;
         m_tool_overrides.clear();
+        m_overrides.clear();
     }
     m_tool_list_view   = nullptr;
     m_initialized_type = InitializedType::None;
@@ -430,10 +453,23 @@ void PrintToolRowItem::initialize()
             { move_tool(dropped_tool_index, index); },
             !m_options.show_favorites
         };
-        m_tool_list_view = m_content->emplace_back<ToolRowListView>(std::move(factory));
+
+        auto tool_list_section{m_content->emplace_back<Item>()};
+        tool_list_section->set_flex_shrink(0);
+        tool_list_section->set_justify_content(YGJustifySpaceBetween);
+        tool_list_section->set_align_items(YGAlignFlexStart);
+
+        m_tool_list_view = tool_list_section->emplace_back<ToolRowListView>(std::move(factory));
         m_tool_list_view->set_orientation(Orientation::Vertical);
         m_tool_list_view->set_gap(5_fpx);
         m_tool_list_view->set_source_list(this);
+
+        m_effective_value_info = tool_list_section->emplace_back<
+            LayoutButton>("", Render::Icon::EffectiveValueInfo, Biz::_u8L("More info"));
+        m_effective_value_info->set_width(20_fpx);
+        m_effective_value_info->set_height(20_fpx);
+        m_effective_value_info->callbacks().action = [name{m_state->print_item->def().name}]()
+        { AppServices::instance().navigator().open_effective_values_dialog(name); };
 
         if (m_options.show_explanation) {
             m_explanation_container =

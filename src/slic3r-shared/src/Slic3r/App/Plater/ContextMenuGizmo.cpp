@@ -1,8 +1,8 @@
 #include "Slic3r/App/Plater/ContextMenuGizmo.hpp"
+#include "Slic3r/App/Plater/GizmoTimeouts.hpp"
 #include "Slic3r/App/Scene/BedNodeTag.hpp"
 #include "Slic3r/App/Scene/SceneNodeTag.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
-#include "Slic3r/Biz/Algorithms/Point.hpp"
 #include "Slic3r/App/Scene/ISceneProvider.hpp"
 
 #include <tracy/Tracy.hpp>
@@ -37,10 +37,13 @@ ContextMenuGizmo::on_mouse(Scene::GizmoEventContext& ctx, bool only_active)
     const Platform::MouseEvent::Type type{evt.type()};
 
     if (evt.button() != Platform::MouseButton::Right) {
-        return Scene::GizmoActivationState::Inactive;
+        return m_probing ?
+            Scene::GizmoActivationState::Probing :
+            Scene::GizmoActivationState::Inactive;
     }
 
     if (type == Platform::MouseEvent::Type::ButtonDown) {
+        m_probing = true;
         return Scene::GizmoActivationState::Probing;
     }
     auto& timer_queue = Biz::Platform::PlatformServices::instance().timer_queue();
@@ -62,8 +65,8 @@ ContextMenuGizmo::on_mouse(Scene::GizmoEventContext& ctx, bool only_active)
         Domain::Vec2f pos{evt.x(), evt.y()};
 
         if (ctx.pick_results().empty()) {
-            invoke_show_context_menu(ContextMenuType::Scene, pos);
-            return Scene::GizmoActivationState::Inactive;
+            request_context_menu(ContextMenuType::Scene, pos);
+            return Scene::GizmoActivationState::Done;
         }
 
         Scene::Node* node = ctx.pick_results().front().node;
@@ -71,7 +74,8 @@ ContextMenuGizmo::on_mouse(Scene::GizmoEventContext& ctx, bool only_active)
             const Domain::BedRef instance{bed_tag->config_container_id, bed_tag->instance_id};
 
             if (m_project_interactor.scene_interactor().bed_selection().is_selected(instance)) {
-                invoke_show_context_menu(ContextMenuType::Bed, pos);
+                request_context_menu(ContextMenuType::Bed, pos);
+                return Scene::GizmoActivationState::Done;
             }
         } else if (const Scene::SceneNodeTag* tag{node->tag_of_type<Scene::SceneNodeTag>()};
                    tag && !tag->is_wipe_tower())
@@ -79,36 +83,16 @@ ContextMenuGizmo::on_mouse(Scene::GizmoEventContext& ctx, bool only_active)
             // ButtonUp id postponed a bit from QuickSelectGizmo, so
             // we need to postpone its processing here slightly too to correct process selection before
             m_timer_id = timer_queue.set_timer(
-                std::chrono::milliseconds(150),
+                std::chrono::milliseconds(GIZMO_CONTEXT_MENU_TIMEOUT),
                 [this, pos]()
                 {
-                    const Biz::Scene::ObjectSelection& selection =
-                        m_project_interactor.scene_interactor().object_selection();
-                    if (!selection.empty()) {
-                        Domain::Project& project = m_project_interactor.selected_project();
-                        if (selection.mode == Slic3r::Biz::Scene::SelectionMode::Volume) {
-                            bool is_svg_or_text = selection.elements.size() == 1;
-                            if (is_svg_or_text) {
-                                Domain::ModelVolume* volume = project.find_volume_by_id(
-                                    selection.elements.front().object_id,
-                                    selection.elements.front().volume_id
-                                );
-                                is_svg_or_text = volume->is_text() || volume->is_svg();
-                            }
-
-                            invoke_show_context_menu(
-                                is_svg_or_text ? ContextMenuType::SvgOrText :
-                                                 ContextMenuType::Volume,
-                                pos
-                            );
-                        } else {
-                            invoke_show_context_menu(
-                                selection.only_single_object() ? ContextMenuType::Object :
-                                                                 ContextMenuType::MultiObjects,
-                                pos
-                            );
-                        }
-                    }
+                    request_context_menu(
+                        context_menu_type(
+                            m_project_interactor.scene_interactor().object_selection(),
+                            m_project_interactor.selected_project()
+                        ),
+                        pos
+                    );
                 }
             );
             return Scene::GizmoActivationState::Inactive;
@@ -118,10 +102,9 @@ ContextMenuGizmo::on_mouse(Scene::GizmoEventContext& ctx, bool only_active)
     return Scene::GizmoActivationState::Inactive;
 }
 
-void ContextMenuGizmo::invoke_show_context_menu(ContextMenuType type, Domain::Vec2f mouse_position)
+void ContextMenuGizmo::on_cycle_prepare()
 {
-    invoke_listeners<IShowContextMenuListener>([&](IShowContextMenuListener* l)
-                                               { l->on_show_context_menu(type, mouse_position); });
+    m_probing = false;
 }
 
 } // namespace Slic3r::App::Plater

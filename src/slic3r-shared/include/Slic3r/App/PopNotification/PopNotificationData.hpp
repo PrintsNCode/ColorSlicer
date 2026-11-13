@@ -25,6 +25,7 @@ enum class PopNotificationType
     LoadError,
     ArrangeEvent,
     ConnectError,
+    PrinterPresetMismatch,
     FileExplorerError,
     PresetUpdaterStatus,
     PresetUpdaterInstalled,
@@ -33,7 +34,10 @@ enum class PopNotificationType
     PresetUpdaterError,
     PluginInstallationError,
     PluginInstallationSuccess,
-    GeometryOnlyImport
+    PluginBundleDownloaded,
+    GeometryOnlyImport,
+    ArchiveFilesSkipped,
+    ArchiveOpenPostponed
 };
 
 /*

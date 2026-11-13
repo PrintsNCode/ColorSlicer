@@ -1,6 +1,31 @@
 #include "Slic3r/Biz/ConfigBoxObservableList.hpp"
+#include "Slic3r/Biz/Scene/SceneInteractor.hpp"
+
+#include <algorithm>
 
 namespace Slic3r::Biz {
+
+ConfigBoxObservableList::ConfigBoxObservableList(
+    Scene::SceneInteractor* scene_interctor,
+    Slicing::SlicingInteractor* slicing_interactor) :
+    m_scene_interactor{scene_interctor},
+    m_slicing_interactor{slicing_interactor}
+{
+    if (m_scene_interactor) {
+        ASSERT(m_slicing_interactor);
+        m_scene_interactor->add_listener<ISelectedBedInstancesChangedListener>(this);
+        m_slicing_interactor->add_listener<Slicing::IBackgroundProcessStateListener>(this);
+    }
+}
+
+ConfigBoxObservableList::~ConfigBoxObservableList()
+{
+    if (m_scene_interactor) {
+        ASSERT(m_slicing_interactor);
+        m_scene_interactor->remove_listener<ISelectedBedInstancesChangedListener>(this);
+        m_slicing_interactor->remove_listener<Slicing::IBackgroundProcessStateListener>(this);
+    }
+}
 
 void ConfigBoxObservableList::set_config_box(
     Domain::ConfigBox* observable_config_box,
@@ -25,6 +50,39 @@ void ConfigBoxObservableList::set_config_box(
     invoke_listeners<IListObserver<ConfigItemContext>>([&](IListObserver<ConfigItemContext>* l)
                                                         { l->on_reset(); });
     // }
+}
+
+void ConfigBoxObservableList::set_original_config_box(const Domain::ConfigBox* original_config_box)
+{
+    if (!m_config_box) {
+        return;
+    }
+
+    // The observers are bound to the items by index, so they can be kept only if the observed
+    // config items are still the same.
+    const bool same_items = std::ranges::equal(
+        m_config_box->items.all_items(),
+        m_items,
+        [](const Domain::ConfigItem& config_item, const ConfigItemContext& item)
+        { return &config_item == item.config_item; }
+    );
+    if (!same_items) {
+        set_config_box(m_config_box, original_config_box);
+        return;
+    }
+    if (m_items.empty()) {
+        return;
+    }
+
+    for (ConfigItemContext& item : m_items) {
+        item.original_config_item =
+            original_config_box ? original_config_box->find(item.name).item : nullptr;
+    }
+
+    invoke_listeners<IListObserver<ConfigItemContext>>(
+        [this](IListObserver<ConfigItemContext>* l)
+        { l->on_updated(IndexRange(0, m_items.size() - 1)); }
+    );
 }
 
 const ConfigItemContext& ConfigBoxObservableList::at(size_t index) const
@@ -91,6 +149,41 @@ void ConfigBoxObservableList::set_from_original_value(const std::string& key)
     const ConfigItemContext& item_context = find_item_context(m_items, key);
     if (item_context.original_config_item) {
         set_value(key, item_context.original_config_item->value());
+    }
+}
+
+void ConfigBoxObservableList::on_selected_bed_instances_changed(
+    Domain::SelectionId project_id,
+    const Scene::BedSelection& bed_selection)
+{
+    update_effective_value_statuses({project_id, bed_selection.last_selected_bed().instance_id});
+}
+
+void
+ConfigBoxObservableList::on_background_process_state_changed(const Domain::SlicingId slicing_id)
+{
+    update_effective_value_statuses(slicing_id);
+}
+
+void ConfigBoxObservableList::update_effective_value_statuses(const Domain::SlicingId slicing_id)
+{
+    ASSERT(m_slicing_interactor);
+
+    const Slicing::BackgroundProcessState* state{
+        m_slicing_interactor->find_process_state(slicing_id)};
+
+    if (!state) {
+        return;
+    }
+
+    for (size_t index{}; index < m_items.size(); ++index) {
+        const EffectiveValueStatus status{
+            get_effective_value_status(m_items[index].name, m_config_box->location, state->effective_values)};
+        if (m_items[index].effective_value_status != status) {
+            m_items[index].effective_value_status = status;
+            invoke_listeners<IListObserver<ConfigItemContext>>(
+                [index](IListObserver<ConfigItemContext>* l) { l->on_updated(index); });
+        }
     }
 }
 

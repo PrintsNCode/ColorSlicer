@@ -14,6 +14,7 @@
 #include "Slic3r/Assert.hpp"
 
 
+#include <algorithm>
 #include <nlohmann/json.hpp>
 #include <regex>
 
@@ -276,6 +277,7 @@ std::vector<BrowserLogicCommand> BrowserLogicPrintables::on_printables_event_dow
     info.load_count = 0;
     Biz::FileDownloader::FileDownloaderMultiTicket sources;
     sources.jobs.push_back(std::move(info));
+    sources.tag = std::make_shared<Biz::FileDownloader::PrintablesFileDownloaderTag>();
     m_project_interactor.download_model_from_printables_tab(std::move(sources));
     return {{BrowserLogicCommandType::SwitchToSlicing, {}}};;
 }
@@ -305,19 +307,24 @@ std::vector<BrowserLogicCommand> BrowserLogicPrintables::on_printables_event_sli
     info.load_count = 1;
     Biz::FileDownloader::FileDownloaderMultiTicket sources;
     sources.jobs.push_back(std::move(info));
+    sources.tag = std::make_shared<Biz::FileDownloader::PrintablesFileDownloaderTag>();
     m_project_interactor.download_model_from_printables_tab(std::move(sources));
     return {{BrowserLogicCommandType::SwitchToSlicing, {}}};
 }
+
+static constexpr int MAX_SLICE_FILES_COUNT = 100;
 
 std::vector<BrowserLogicCommand> BrowserLogicPrintables::on_printables_event_slice_files(const std::string& message_data)
 {
 
     Biz::FileDownloader::FileDownloaderMultiTicket sources;
+    auto tag = std::make_shared<Biz::FileDownloader::PrintablesFileDownloaderTag>();
+    sources.tag = tag;
      
     try {
         nlohmann::json j = nlohmann::json::parse(message_data);
         if (j.contains("new_project") && j["new_project"].is_boolean()) {
-            sources.new_project = j["new_project"].get<bool>();
+            tag->new_project = j["new_project"].get<bool>();
         }
         if (j.contains("objects") && j["objects"].is_array()) {
             for (const auto& obj : j["objects"]) {
@@ -326,7 +333,8 @@ std::vector<BrowserLogicCommand> BrowserLogicPrintables::on_printables_event_sli
                     info.file_name = obj["name"].get<std::string>();
                 }
                 if (obj.contains("count") && obj["count"].is_number_integer()) {
-                    info.load_count = obj["count"].get<int>();
+                    // Each copy loads the file again, do not let the message ask for a negative (huge as size_t) or absurd count.
+                    info.load_count = std::clamp(obj["count"].get<int>(), 0, MAX_SLICE_FILES_COUNT);
                 }
                 if (obj.contains("source")) {
                     const auto& source = obj["source"];

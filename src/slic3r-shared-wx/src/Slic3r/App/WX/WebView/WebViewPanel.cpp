@@ -2,11 +2,9 @@
 
 #include "WebViewPlatformUtils.hpp"
 
-#include "Slic3r/App/WX/WebView/WebView.hpp"
 #include "Slic3r/App/WX/UrlProtocolRegistration.hpp"
 #include "Slic3r/App/WX/StringConversions.hpp"
 #include "Slic3r/App/WX/I18N.hpp"
-#include "Slic3r/Biz/Network/ServiceConfig.hpp"
 #include "Slic3r/App/WX/format.hpp"
 #include "Slic3r/App/WX/WidgetsConfig.hpp"
 
@@ -111,88 +109,83 @@ WebViewPanel::WebViewPanel(wxWindow* parent,  int id, std::unique_ptr<App::Brows
 #endif
 
     // Create the webview
-    if (!do_create) {
-        m_do_late_webview_create = true;
-        return;
+    if (do_create) {
+        late_create();
     }
-    m_do_late_webview_create = false;
-    late_create();
 }
 
 void WebViewPanel::late_create()
 {
-    m_do_late_webview_create = false;
-    m_web_view               = WebView::web_view_new();
-
-    if (!m_web_view) {
-        wxStaticText* text = new wxStaticText(this, wxID_ANY, _L("Failed to load a web browser."));
-        topsizer->Add(text, 0, wxALIGN_LEFT | wxBOTTOM, 10);
+    if (!m_host.create(
+            this,
+            topsizer,
+            format_wxstr(
+                "file://%1%/web/%2%%3%.html",
+                boost::filesystem::path(resources_dir()).generic_string(),
+                m_logic->loading_html(),
+                w_config()->dark_mode() ? "_dark" : ""
+            ),
+            m_logic->script_message_handler_names()
+        ))
+    {
         return;
     }
-    WebView::web_view_create(
-        m_web_view,
-        this,
-        format_wxstr(
-            "file://%1%/web/%2%%3%.html",
-            boost::filesystem::path(resources_dir()).generic_string(),
-            m_logic->loading_html(),
-            w_config()->dark_mode() ? "_dark" : ""
-        ),
-        m_logic->script_message_handler_names()
-    );
 
-    if (Biz::Network::ServiceConfig::instance().webdev_enabled()) {
-        setup_webview_devtools(m_web_view);
-    }
-    topsizer->Add(m_web_view, wxSizerFlags().Expand().Proportion(1));
+    wxWebView* web_view = m_host.get();
 
     // Connect the webview events
-    Bind(wxEVT_WEBVIEW_ERROR, &WebViewPanel::on_error, this, m_web_view->GetId());
-    Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebViewPanel::on_script_message, this, m_web_view->GetId());
-    Bind(wxEVT_WEBVIEW_NAVIGATING, &WebViewPanel::on_navigation_request, this, m_web_view->GetId());
-    Bind(wxEVT_WEBVIEW_LOADED, &WebViewPanel::on_loaded, this, m_web_view->GetId());
-    Bind(wxEVT_WEBVIEW_CREATED, &WebViewPanel::on_created, this, m_web_view->GetId());
+    Bind(wxEVT_WEBVIEW_ERROR, &WebViewPanel::on_error, this, web_view->GetId());
+    Bind(wxEVT_WEBVIEW_SCRIPT_MESSAGE_RECEIVED, &WebViewPanel::on_script_message, this, web_view->GetId());
+    Bind(wxEVT_WEBVIEW_NAVIGATING, &WebViewPanel::on_navigation_request, this, web_view->GetId());
+    Bind(wxEVT_WEBVIEW_LOADED, &WebViewPanel::on_loaded, this, web_view->GetId());
+    Bind(wxEVT_WEBVIEW_CREATED, &WebViewPanel::on_created, this, web_view->GetId());
 
     Layout();
 
 #ifdef DEBUG_URL_PANEL
-    setup_webview_devtools(m_web_view);
+    setup_webview_devtools(web_view);
 #endif
 }
 
 void WebViewPanel::on_user_account_id_success(bool is_refresh, const std::string& username)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_user_account_id_success(is_refresh, into_u8(m_web_view->GetCurrentURL())));
+    [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_user_account_id_success(is_refresh, into_u8(web_view->GetCurrentURL())));
     DEBUG_ASSERT(b, "False return value signals Veto which cannot be done here.");
 }
 
 void WebViewPanel::on_user_account_logged_out()
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_user_account_logged_out(into_u8(m_web_view->GetCurrentURL())));
+    [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_user_account_logged_out(into_u8(web_view->GetCurrentURL())));
     DEBUG_ASSERT(b, "False return value signals Veto which cannot be done here.");
 }
 
 void WebViewPanel::on_user_account_will_refresh()
 {
-    if (!m_web_view)
+    if (!m_host)
         return;
     [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_user_account_will_refresh());
     DEBUG_ASSERT(b, "False return value signals Veto which cannot be done here.");
 }
 
-void WebViewPanel::on_printables_secret_token(const std::string& body) 
+void WebViewPanel::on_printables_secret_token(const std::string& body)
 {
+    if (!m_host) {
+        return;
+    }
     [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_printables_secret_token(body));
     DEBUG_ASSERT(b, "False return value signals Veto which cannot be done here.");
 }
 
 void WebViewPanel::load_url(const wxString& url)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
     this->on_page_will_load();
@@ -203,23 +196,24 @@ void WebViewPanel::load_url(const wxString& url)
     m_url->SetLabelText(url);
 #endif
     wxString correct_url = url.empty() ? wxString(L"") : wxURI(url).BuildURI();
-    m_web_view->LoadURL(correct_url);
-    m_web_view->SetFocus();
+    web_view->LoadURL(correct_url);
+    web_view->SetFocus();
 }
 
 void WebViewPanel::load_error_page()
 {
-    if (!m_web_view || m_do_late_webview_create) {
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
         return;
     }
 
-    m_web_view->Stop();
+    web_view->Stop();
     m_load_error_page = true;
 }
 
 void WebViewPanel::load_default_url()
 {
-    if (!m_web_view || m_do_late_webview_create) {
+    if (!m_host) {
         return;
     }
 
@@ -228,26 +222,28 @@ void WebViewPanel::load_default_url()
 
 void WebViewPanel::run_script(const wxString& javascript)
 {
-    if (!m_web_view || !m_shown)
+    wxWebView* web_view = m_host.get();
+    if (!web_view || !m_shown)
         return;
     // SPDLOG_DEBUG("RunScript: {}", into_u8(javascript));
-    m_web_view->RunScriptAsync(javascript);
+    web_view->RunScriptAsync(javascript);
 }
 
 void WebViewPanel::do_reload()
 {
-    if (!m_web_view) {
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
         return;
     }
     // IsBusy on Linux very often returns true due to loading about:blank after loading requested url.
 #ifndef __linux__
-    if (m_web_view->IsBusy()) {
+    if (web_view->IsBusy()) {
         return;
     }
 #endif
-    const wxString current_url = m_web_view->GetCurrentURL();
+    const wxString current_url = web_view->GetCurrentURL();
     if (current_url.StartsWith(from_u8(m_logic->url()))) {
-        m_web_view->Reload();
+        web_view->Reload();
         return;
     }
     load_default_url();
@@ -260,9 +256,11 @@ void WebViewPanel::on_show(wxShowEvent& evt)
         wxSetCursor(wxNullCursor);
         return;
     }
-    if (m_do_late_webview_create) {
-        m_do_late_webview_create = false;
+    if (m_host.is_pending()) {
         late_create();
+        return;
+    }
+    if (!m_host) {
         return;
     }
     [[maybe_unused]] bool b = process_logic_command_vector(std::move(m_logic->on_show_webview_event(evt.IsShown())));
@@ -271,6 +269,8 @@ void WebViewPanel::on_show(wxShowEvent& evt)
 
 void WebViewPanel::on_script_message(wxWebViewEvent& evt)
 {
+    if (!m_host)
+        return;
     if (!process_logic_command_vector(std::move(m_logic->on_script_message_webview_event(into_u8(evt.GetString())))))
     {
         evt.Veto();
@@ -279,10 +279,13 @@ void WebViewPanel::on_script_message(wxWebViewEvent& evt)
 
 void WebViewPanel::on_navigation_request(wxWebViewEvent& evt)
 {
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
+        return;
     if (!process_logic_command_vector(
             std::move(m_logic->on_navigation_request_webview_event(
                 into_u8(evt.GetURL()),
-                into_u8(m_web_view->GetCurrentURL())
+                into_u8(web_view->GetCurrentURL())
             ))
         ))
     {
@@ -292,6 +295,8 @@ void WebViewPanel::on_navigation_request(wxWebViewEvent& evt)
 
 void WebViewPanel::on_loaded(wxWebViewEvent& evt)
 {
+    if (!m_host)
+        return;
     if (!process_logic_command_vector(std::move(m_logic->on_loaded_webview_event(into_u8(evt.GetURL())))))
     {
         evt.Veto();
@@ -309,6 +314,7 @@ void WebViewPanel::on_page_will_load()
 
 void WebViewPanel::on_created(wxWebViewEvent& evt)
 {
+    m_host.notify_created();
     [[maybe_unused]] bool b = process_logic_command_vector(m_logic->on_webview_created());
     DEBUG_ASSERT(b, "False return value signals Veto which cannot be done here.");
 }
@@ -332,16 +338,22 @@ case type: \
         WX_ERROR_CASE(wxWEBVIEW_NAV_ERR_OTHER);
     }
 
-    SPDLOG_ERROR("WebViewDialog error: {}", category);
+    SPDLOG_ERROR("WebViewPanel error: {} {}", category, into_u8(evt.GetString()));
+
+    if (m_host.notify_error()) {
+        return;
+    }
+
     load_error_page();
 }
 
 void WebViewPanel::on_idle(wxIdleEvent& evt)
 {
-    if (!m_web_view || m_do_late_webview_create)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    bool is_busy = m_web_view->IsBusy();
+    bool is_busy = web_view->IsBusy();
 
     // The busy cursor on webview is switched off on Linux.
     // Because m_browser->IsBusy() is almost always true on Printables / Connect.
@@ -376,8 +388,8 @@ void WebViewPanel::on_idle(wxIdleEvent& evt)
             // F.e. if there is an error but we do AddUserScript & Reload, the handling will break.
             // So we just reset the handler here.
             if (!m_script_message_hadler_names.empty()) {
-                m_web_view->RemoveScriptMessageHandler(from_u8(m_script_message_hadler_names.front()));
-                m_web_view->AddScriptMessageHandler(from_u8(m_script_message_hadler_names.front()));
+                web_view->RemoveScriptMessageHandler(from_u8(m_script_message_hadler_names.front()));
+                web_view->AddScriptMessageHandler(from_u8(m_script_message_hadler_names.front()));
             }
         }
     }
@@ -389,54 +401,60 @@ void WebViewPanel::on_idle(wxIdleEvent& evt)
 
 void WebViewPanel::on_url(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 #ifdef DEBUG_URL_PANEL
-    m_web_view->LoadURL(m_url->GetValue());
-    m_web_view->SetFocus();
+    web_view->LoadURL(m_url->GetValue());
+    web_view->SetFocus();
 #endif
 }
 
 void WebViewPanel::on_back_button(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    if (!m_web_view->CanGoBack())
+    if (!web_view->CanGoBack())
         return;
-    m_web_view->GoBack();
+    web_view->GoBack();
 }
 
 void WebViewPanel::on_forward_button(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    if (!m_web_view->CanGoForward())
+    if (!web_view->CanGoForward())
         return;
-    m_web_view->GoForward();
+    web_view->GoForward();
 }
 
 void WebViewPanel::on_stop_button(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    m_web_view->Stop();
+    web_view->Stop();
 }
 
 void WebViewPanel::on_reload_button(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
-    m_web_view->Reload();
+    web_view->Reload();
 }
 
 void WebViewPanel::on_view_text_request(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
     wxDialog textViewDialog(this, wxID_ANY, L"Page Text", wxDefaultPosition, wxSize(700, 500), wxDEFAULT_DIALOG_STYLE | wxRESIZE_BORDER);
 
-    wxTextCtrl* text = new wxTextCtrl(this, wxID_ANY, m_web_view->GetPageText(), wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH | wxTE_READONLY);
+    wxTextCtrl* text = new wxTextCtrl(this, wxID_ANY, web_view->GetPageText(), wxDefaultPosition, wxDefaultSize, wxTE_MULTILINE | wxTE_RICH | wxTE_READONLY);
 
     wxBoxSizer* sizer = new wxBoxSizer(wxVERTICAL);
     sizer->Add(text, 1, wxEXPAND);
@@ -446,12 +464,13 @@ void WebViewPanel::on_view_text_request(wxCommandEvent& evt)
 
 void WebViewPanel::on_tools_clicked(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
 #ifdef DEBUG_URL_PANEL
-    m_context_menu->Check(m_web_view->IsContextMenuEnabled());
-    m_dev_tools->Check(m_web_view->IsAccessToDevToolsEnabled());
+    m_context_menu->Check(web_view->IsContextMenuEnabled());
+    m_dev_tools->Check(web_view->IsAccessToDevToolsEnabled());
 
     wxPoint position = ScreenToClient(wxGetMousePosition());
     PopupMenu(m_tools_menu, position.x, position.y);
@@ -469,7 +488,8 @@ void WebViewPanel::on_run_script_custom(wxCommandEvent& evt)
 
 void WebViewPanel::on_add_user_script(wxCommandEvent& evt)
 {
-    if (!m_web_view) {
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
         return;
     }
     wxString userScript;
@@ -478,13 +498,14 @@ void WebViewPanel::on_add_user_script(wxCommandEvent& evt)
         return;
 
     const wxString& javascript = dialog.GetValue();
-    if (!m_web_view->AddUserScript(javascript))
+    if (!web_view->AddUserScript(javascript))
         SPDLOG_ERROR("Could not add user script");
 }
 
 void WebViewPanel::on_set_custom_user_agent(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
     wxString customUserAgent;
@@ -492,48 +513,53 @@ void WebViewPanel::on_set_custom_user_agent(wxCommandEvent& evt)
     if (dialog.ShowModal() != wxID_OK)
         return;
 
-    if (!m_web_view->SetUserAgent(customUserAgent))
+    if (!web_view->SetUserAgent(customUserAgent))
         SPDLOG_ERROR("Could not set custom user agent");
 }
 
 void WebViewPanel::on_clear_selection(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    m_web_view->ClearSelection();
+    web_view->ClearSelection();
 }
 
 void WebViewPanel::on_delete_selection(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    m_web_view->DeleteSelection();
+    web_view->DeleteSelection();
 }
 
 void WebViewPanel::on_select_all(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    m_web_view->SelectAll();
+    web_view->SelectAll();
 }
 
 void WebViewPanel::on_enable_context_menu(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    m_web_view->EnableContextMenu(evt.IsChecked());
+    web_view->EnableContextMenu(evt.IsChecked());
 }
 
 void WebViewPanel::on_enable_dev_tools(wxCommandEvent& evt)
 {
-    if (!m_web_view)
+    wxWebView* web_view = m_host.get();
+    if (!web_view)
         return;
 
-    m_web_view->EnableAccessToDevTools(evt.IsChecked());
+    web_view->EnableAccessToDevTools(evt.IsChecked());
 }
 
 bool WebViewPanel::handle_logic_command_LoadURL(const std::string& data)
@@ -544,7 +570,11 @@ bool WebViewPanel::handle_logic_command_LoadURL(const std::string& data)
 
 bool WebViewPanel::handle_logic_command_LoadRequest(const std::string& data)
 {
-    load_request(m_web_view, data, m_logic->access_token());
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
+        return true;
+    }
+    load_request(web_view, data, m_logic->access_token());
     return true;
 }
 
@@ -568,7 +598,11 @@ bool WebViewPanel::handle_logic_command_EndModalCancel(const std::string& data)
 
 bool WebViewPanel::handle_logic_command_DeleteCookies(const std::string& data)
 {
-    delete_cookies(m_web_view, data);
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
+        return true;
+    }
+    delete_cookies(web_view, data);
     return true;
 }
 
@@ -592,7 +626,11 @@ bool WebViewPanel::handle_logic_command_DoReload(const std::string& data)
 
 bool WebViewPanel::handle_logic_command_AddUserScript(const std::string& data)
 {
-    m_web_view->AddUserScript(from_u8(data));
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
+        return true;
+    }
+    web_view->AddUserScript(from_u8(data));
     return true;
 }
 
@@ -646,13 +684,21 @@ bool WebViewPanel::handle_logic_command_SetBasicAuth(const std::string& data)
         return false;
     }
 
-    setup_webview_with_credentials(m_web_view, usr, pwd);
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
+        return true;
+    }
+    setup_webview_with_credentials(web_view, usr, pwd);
     return true;
 }
 
 bool WebViewPanel::handle_logic_command_ClearBasicAuth(const std::string& data)
 {
-    remove_webview_credentials(m_web_view);
+    wxWebView* web_view = m_host.get();
+    if (!web_view) {
+        return true;
+    }
+    remove_webview_credentials(web_view);
     return true;
 }
 

@@ -46,6 +46,33 @@ std::vector<VendorKey> forced_keys(const PresetUpdaterReconfigurationList& list)
     return keys;
 }
 
+size_t unacknowledged_count(const std::vector<VendorReconfiguration>& new_vendors)
+{
+    return static_cast<size_t>(std::count_if(
+        new_vendors.begin(),
+        new_vendors.end(),
+        [](const VendorReconfiguration& reconfiguration) { return !reconfiguration.acknowledged; }
+    ));
+}
+
+/// Names every offer a check would announce, so a later check can tell whether it brings news.
+std::set<std::string> announced_offer_names(const PresetUpdaterReconfigurationList& list)
+{
+    std::set<std::string> names;
+    for (const VendorReconfiguration& update : list.regular_updates()) {
+        names.insert(
+            update.vendor_repo_id + "/" + update.vendor_id + "@"
+            + update.recommended_version.to_string()
+        );
+    }
+    for (const VendorReconfiguration& added : list.new_vendors()) {
+        if (!added.acknowledged) {
+            names.insert(added.vendor_repo_id + "/" + added.vendor_id);
+        }
+    }
+    return names;
+}
+
 void log_reconfigurations(const PresetUpdaterReconfigurationList& list)
 {
     const std::pair<const char*, const std::vector<VendorReconfiguration>*> buckets[]{
@@ -89,6 +116,8 @@ const char* job_kind_name(JobKind kind)
         return "add source";
     case JobKind::RemoveSource:
         return "remove source";
+    case JobKind::AcknowledgeNewVendors:
+        return "acknowledge new vendors";
     }
     return "unknown";
 }
@@ -327,6 +356,58 @@ void SelectionCommitter::fire()
     }
     m_dirty = false;
     m_commit();
+}
+
+// =============================================================================================
+// PeriodicCheckTimer
+// =============================================================================================
+
+PeriodicCheckTimer::PeriodicCheckTimer(
+    Biz::Platform::TimerQueue& timer_queue, std::chrono::milliseconds interval, TickFn tick
+) :
+    m_timer_queue(timer_queue),
+    m_interval(interval),
+    m_tick(std::move(tick))
+{}
+
+PeriodicCheckTimer::~PeriodicCheckTimer() = default;
+
+bool PeriodicCheckTimer::start()
+{
+    if (m_running) {
+        return false;
+    }
+    m_running = true;
+    arm();
+    return true;
+}
+
+void PeriodicCheckTimer::stop()
+{
+    ++m_generation;
+    m_running = false;
+}
+
+bool PeriodicCheckTimer::running() const
+{
+    return m_running;
+}
+
+void PeriodicCheckTimer::arm()
+{
+    const uint64_t generation = ++m_generation;
+
+    m_timer_queue.set_timer(
+        m_interval,
+        [this, generation, life = std::weak_ptr<int>(m_life)]()
+        {
+            if (life.expired() || generation != m_generation) {
+                return;
+            }
+            arm();
+            m_tick();
+        }
+    );
 }
 
 // =============================================================================================
@@ -918,7 +999,7 @@ void SourceStore::merge_vendors(SourceEntry& entry, const std::vector<VendorRepo
         {
             // Work in flight, or a failure the user has not dealt with, outlives a re-check.
             vendor.install_state = previous_vendor->second.install_state;
-            vendor.error_text    = previous_vendor->second.error_text;
+            vendor.failure_reason = previous_vendor->second.failure_reason;
             vendor.removing      = previous_vendor->second.removing;
         }
 
@@ -1016,7 +1097,7 @@ void SourceStore::set_install_state(const std::vector<VendorKey>& keys, InstallS
             continue;
         }
         vendor->install_state = state;
-        vendor->error_text.clear();
+        vendor->failure_reason.reset();
     }
 }
 
@@ -1031,14 +1112,14 @@ void SourceStore::set_removing(const std::vector<VendorKey>& keys)
     }
 }
 
-void SourceStore::set_install_failed(const VendorKey& key, const std::string& error_text)
+void SourceStore::set_install_failed(const VendorKey& key, Biz::PresetUpdater::PresetUpdaterReason reason)
 {
     VendorEntry* vendor = find_vendor(key);
     if (vendor == nullptr) {
         return;
     }
     vendor->install_state = InstallState::Failed;
-    vendor->error_text    = error_text;
+    vendor->failure_reason = reason;
 }
 
 void SourceStore::set_install_done(const VendorKey& key)
@@ -1048,7 +1129,7 @@ void SourceStore::set_install_done(const VendorKey& key)
         return;
     }
     vendor->install_state = InstallState::Done;
-    vendor->error_text.clear();
+    vendor->failure_reason.reset();
 }
 
 void SourceStore::abandon_install(const std::vector<VendorKey>& keys, bool canceled)
@@ -1229,7 +1310,7 @@ bool SourceStore::publish_vendors(const SourceEntry& entry, bool install_locked)
         row.current_version     = vendor.current_version;
         row.recommended_version = vendor.recommended_version;
         row.install_state       = vendor.install_state;
-        row.error_text          = vendor.error_text;
+        row.failure_reason      = vendor.failure_reason;
         row.install_locked      = install_locked;
         row.skipped             = vendor.skipped;
         row.up_to_date          = vendor.up_to_date;
@@ -1354,6 +1435,11 @@ PresetUpdaterController::PresetUpdaterController(
 {
     if (m_environment.timer_queue != nullptr) {
         m_committer.emplace(*m_environment.timer_queue, [this]() { commit_selection(); });
+        m_periodic.emplace(
+            *m_environment.timer_queue,
+            m_environment.periodic_check_interval,
+            [this]() { on_periodic_check_due(); }
+        );
     }
     m_interactor.add_listener<Biz::PresetUpdater::IPresetUpdaterResultListener>(this);
 }
@@ -1372,6 +1458,9 @@ void PresetUpdaterController::shutdown()
 
     if (m_committer.has_value()) {
         m_committer->cancel();
+    }
+    if (m_periodic.has_value()) {
+        m_periodic->stop();
     }
 
     m_activity_reporter.reset();
@@ -1425,6 +1514,89 @@ void PresetUpdaterController::start_background_check()
 
     Transaction transaction(*this);
     start_check(Biz::PresetUpdater::SourceListSync::Fetch, CheckReporting::Silent);
+
+    if (m_periodic.has_value() && online_allowed()) {
+        m_periodic->start();
+    }
+}
+
+void PresetUpdaterController::on_online_allowed_changed()
+{
+    if (m_shut_down) {
+        return;
+    }
+
+    Transaction transaction(*this);
+    if (!online_allowed()) {
+        if (m_periodic.has_value()) {
+            m_periodic->stop();
+        }
+        m_offline_check_pending = true;
+        check_offline_once_sources_settle();
+        return;
+    }
+    m_offline_check_pending = false;
+    if (!m_periodic.has_value()) {
+        return;
+    }
+    if (m_periodic->start() && may_check_in_background()) {
+        start_check(Biz::PresetUpdater::SourceListSync::Fetch, CheckReporting::Silent);
+    }
+}
+
+void PresetUpdaterController::on_logged_in()
+{
+    recheck_sources_silently(CheckAnnouncement::OnChange);
+}
+
+void PresetUpdaterController::on_logged_out()
+{
+    recheck_sources_silently(CheckAnnouncement::Nothing);
+}
+
+void PresetUpdaterController::recheck_sources_silently(CheckAnnouncement announcement)
+{
+    if (m_shut_down || !online_allowed() || dialog_open() || forced_mode()
+        || activity() == ControllerActivity::Installing || sources_changing())
+    {
+        return;
+    }
+
+    Transaction transaction(*this);
+    start_check(Biz::PresetUpdater::SourceListSync::Fetch, CheckReporting::Silent, announcement);
+}
+
+void PresetUpdaterController::check_offline_once_sources_settle()
+{
+    if (!m_offline_check_pending || m_shut_down || sources_changing()) {
+        return;
+    }
+    m_offline_check_pending = false;
+    if (online_allowed() || activity() == ControllerActivity::Installing) {
+        return;
+    }
+    start_check(Biz::PresetUpdater::SourceListSync::UseStored, CheckReporting::Silent);
+}
+
+bool PresetUpdaterController::sources_changing() const
+{
+    return m_ledger.any_pending(JobKind::Listing) || m_ledger.any_pending(JobKind::Selection)
+        || m_ledger.any_pending(JobKind::AddSource) || m_ledger.any_pending(JobKind::RemoveSource);
+}
+
+void PresetUpdaterController::on_periodic_check_due()
+{
+    if (m_shut_down || !online_allowed() || !may_check_in_background()) {
+        return;
+    }
+
+    Transaction transaction(*this);
+    start_check(Biz::PresetUpdater::SourceListSync::Fetch, CheckReporting::Silent);
+}
+
+bool PresetUpdaterController::may_check_in_background() const
+{
+    return !dialog_open() && !forced_mode() && !busy();
 }
 
 void PresetUpdaterController::set_show_dialog_callback(std::function<void()> callback)
@@ -1517,11 +1689,14 @@ void PresetUpdaterController::start_listing()
 }
 
 void PresetUpdaterController::start_check(
-    Biz::PresetUpdater::SourceListSync source_list, CheckReporting reporting
+    Biz::PresetUpdater::SourceListSync source_list,
+    CheckReporting reporting,
+    CheckAnnouncement announcement
 )
 {
     cancel_check();
-    m_operation_failed = false;
+    m_operation_failed   = false;
+    m_check_announcement = announcement;
 
     const std::set<std::string> required = m_forced.required_repo_ids();
     m_store.set_required_repos(required);
@@ -1532,8 +1707,8 @@ void PresetUpdaterController::start_check(
         JobKind::Check,
         [this, online, source_list, &required]()
         {
-            return m_interactor.build_update_sync_and_reconfiguration_check(
-                online, Biz::PresetUpdater::VerboseStyle::NoProgress, false, source_list, required
+            return m_interactor.sync_indices_and_reconfiguration_check(
+                online, Biz::PresetUpdater::VerboseStyle::NoProgress, source_list, required
             );
         }
     );
@@ -1571,7 +1746,7 @@ void PresetUpdaterController::start_install(const std::vector<VendorKey>& keys)
         [this, &request]()
         {
             return m_interactor.perform_reconfigurations(
-                request.list, Biz::PresetUpdater::ReconfigurationType::All
+                request.list, online_allowed(), Biz::PresetUpdater::ReconfigurationType::All
             );
         }
     );
@@ -1588,6 +1763,28 @@ void PresetUpdaterController::start_install(const std::vector<VendorKey>& keys)
     );
 
     m_activity_reporter.begin_activity(job_id, Activity::Installing);
+}
+
+void PresetUpdaterController::acknowledge_new_vendors(
+    const PresetUpdaterReconfigurationList& reconfigurations
+)
+{
+    std::map<std::string, std::vector<std::string>> by_repo_id;
+    for (const VendorReconfiguration& reconfiguration : reconfigurations.new_vendors()) {
+        if (reconfiguration.acknowledged) {
+            continue;
+        }
+        by_repo_id[reconfiguration.vendor_repo_id].push_back(reconfiguration.vendor_id);
+    }
+
+    if (by_repo_id.empty()) {
+        return;
+    }
+
+    submit(
+        JobKind::AcknowledgeNewVendors,
+        [this, &by_repo_id]() { return m_interactor.acknowledge_new_vendors(by_repo_id); }
+    );
 }
 
 void PresetUpdaterController::commit_selection()
@@ -1723,7 +1920,7 @@ void PresetUpdaterController::remove_vendor(
         [this, &request]()
         {
             return m_interactor.perform_reconfigurations(
-                request.list, Biz::PresetUpdater::ReconfigurationType::Removals
+                request.list, online_allowed(), Biz::PresetUpdater::ReconfigurationType::Removals
             );
         }
     );
@@ -1738,7 +1935,7 @@ void PresetUpdaterController::remove_vendor(
         m_interactor.pending_job_count() > 1 ? InstallState::Queued : InstallState::Running
     );
 
-    m_activity_reporter.begin_activity(job_id, Activity::Installing);
+    m_activity_reporter.begin_activity(job_id, Activity::RemovingVendor);
 }
 
 void PresetUpdaterController::update_source(const std::string& uuid)
@@ -1766,9 +1963,7 @@ ControllerActivity PresetUpdaterController::activity() const
     if (m_ledger.any_pending(JobKind::Check) || m_ledger.any_pending(JobKind::ForcedCheck)) {
         return ControllerActivity::Checking;
     }
-    if (m_ledger.any_pending(JobKind::Listing) || m_ledger.any_pending(JobKind::Selection)
-        || m_ledger.any_pending(JobKind::AddSource) || m_ledger.any_pending(JobKind::RemoveSource))
-    {
+    if (sources_changing()) {
         return ControllerActivity::ListingSources;
     }
     return ControllerActivity::None;
@@ -1910,7 +2105,7 @@ void PresetUpdaterController::on_preset_updater_error(
 
     if (record != nullptr && carries_vendor_keys(record->kind)) {
         for (const VendorKey& key : record->keys) {
-            m_store.set_install_failed(key, body);
+            m_store.set_install_failed(key, reason);
         }
     }
 
@@ -1965,14 +2160,32 @@ void PresetUpdaterController::on_preset_updater_reconfigurations_list(
     const std::set<std::string> evaluated = m_store.apply_check(outcome);
     m_forced.reconcile(reconfigurations, evaluated, outcome.unjudged_keys());
 
+    if (dialog_open()) {
+        acknowledge_new_vendors(reconfigurations);
+    }
+
     if (forced_mode()) {
         show_dialog();
         return;
     }
 
+    if (m_check_announcement == CheckAnnouncement::Nothing) {
+        return;
+    }
+    const std::set<std::string> offers = announced_offer_names(reconfigurations);
+    if (m_check_announcement == CheckAnnouncement::OnChange
+        && std::includes(
+            m_announced_offers.begin(), m_announced_offers.end(), offers.begin(), offers.end()
+        ))
+    {
+        return;
+    }
+    m_announced_offers = offers;
+
     // Only what is on offer: presets of a version the source does not list cannot be installed.
     m_activity_reporter.report_check_finished(
-        reconfigurations.regular_updates().size() + reconfigurations.new_vendors().size()
+        reconfigurations.regular_updates().size(),
+        unacknowledged_count(reconfigurations.new_vendors())
     );
 }
 
@@ -2014,7 +2227,7 @@ void PresetUpdaterController::on_preset_updater_reconfigurations_performed(
     for (const VendorKey& key : record->keys) {
         const auto failure = failure_of(key);
         if (failure != warnings.end()) {
-            m_store.set_install_failed(key, failure->text);
+            m_store.set_install_failed(key, failure->reason);
             continue;
         }
         succeeded.push_back(key);
@@ -2036,17 +2249,24 @@ void PresetUpdaterController::on_preset_updater_reconfigurations_performed(
 
 void PresetUpdaterController::on_preset_updater_status(
     JobId job_id,
-    const std::string& target,
-    int attempt,
-    unsigned delay,
+    const Biz::PresetUpdater::PresetUpdaterProgress& progress,
     Biz::PresetUpdater::VerboseStyle verbose
 )
 {
     Transaction transaction(*this);
 
-    SPDLOG_INFO("Preset updater status: target:{} attempt:{} delay:{}", target, attempt, delay);
+    SPDLOG_INFO(
+        "Preset updater status: step:{} vendor:{} version:{} {}/{} attempt:{} delay:{}",
+        static_cast<int>(progress.step),
+        progress.vendor_id,
+        progress.version,
+        progress.index,
+        progress.total,
+        progress.attempt,
+        progress.delay
+    );
 
-    m_activity_reporter.report_progress(job_id, target, attempt);
+    m_activity_reporter.report_progress(job_id, progress);
 
     const JobLedger::Record* record = m_ledger.find(job_id);
     if (record == nullptr || !carries_vendor_keys(record->kind)) {
@@ -2147,6 +2367,8 @@ void PresetUpdaterController::on_preset_updater_job_finished(
     if (kind == JobKind::Selection && m_committer.has_value()) {
         m_committer->on_commit_finished();
     }
+
+    check_offline_once_sources_settle();
 
     if (kind == JobKind::ForcedCheck && was_newest) {
         notify_forced_state(forced_mode());

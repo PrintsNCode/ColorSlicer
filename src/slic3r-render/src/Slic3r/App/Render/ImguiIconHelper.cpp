@@ -16,6 +16,7 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
     {Icon::SliderFloatEditBtnIcon, "edit_button"},
     {Icon::SliderFloatEditBtnPressedIcon, "edit_button_pressed"},
     {Icon::RevertButton, "undo"},
+    {Icon::EffectiveValueInfo, "effective_value_info"},
     {Icon::PlugMarker, "plug"},
     {Icon::DowelMarker, "dowel"},
     {Icon::SnapMarker, "snap"},
@@ -116,6 +117,7 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
 
     // Gizmo Paint-On-Supports
     {Icon::Circle, "circle"},
+    {Icon::CircleFull, "circle_full"},
     {Icon::Triangle, "triangle"},
     {Icon::Square, "square"},
     {Icon::Hexagon, "hexagon"},
@@ -157,7 +159,7 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
     {Icon::PlusModifier, "plus_modifier"},
 
     // Physical printer
-    {Icon::ExportToSD, "export_to_sd"},    
+    {Icon::ExportToSD, "export_to_sd"},
     {Icon::ConnectUpload, "connect_gcode"},
     {Icon::ExportToLocal, "save"},
 
@@ -250,9 +252,13 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
     {Icon::ArrowRight, "arrow_right"},
     {Icon::Filter, "filter"},
     {Icon::Robot, "robot"},
+    {Icon::SpoolBig, "spool_big"},
+    {Icon::Primary, "primary"},
+    {Icon::PrintGoals, "print_goals"},
+    {Icon::ExtruderAssignment, "extruder_assignment"},
 };
 
-static const std::unordered_set<Icon> ICON_PNG = {};
+static const std::unordered_set<Icon> ICON_PNG = {Icon::SpoolBig};
 
 std::string ImguiIconHelper::icon_path(Icon icon)
 {

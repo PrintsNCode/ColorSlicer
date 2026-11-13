@@ -313,13 +313,21 @@ struct HwPrinterConfigTemplate
 
 using HwPrinterConfigTemplates = std::vector<HwPrinterConfigTemplate>;
 
+struct PresetFeatures
+{
+    FeatureDefs printer;
+    FeatureDefs print;
+    FeatureDefs toolprint;
+    FeatureDefs material;
+};
+
 struct VendorFeatures
 {
     FeatureDefs printer;
     FeatureDefs tool;
     FeatureDefs feeder;
     FeatureDefs sheet;
-
+    PresetFeatures presets;
 };
 
 struct PrinterFamilyInfo
@@ -327,6 +335,28 @@ struct PrinterFamilyInfo
     std::string label;
     std::string base_model;
     std::vector<std::string> printer_configs_order;
+};
+
+using IdMap = std::map<std::string, std::string>;
+
+struct ModelIdMapping
+{
+    IdMap base_model;
+    IdMap model;
+};
+
+struct ComponentIdMapping
+{
+    IdMap id;
+    ModelIdMapping model;
+};
+
+struct DeprecatedIdMapping
+{
+    ComponentIdMapping printer;
+    ComponentIdMapping tool;
+    ComponentIdMapping feeder;
+    ComponentIdMapping sheet;
 };
 
 struct VendorInfo
@@ -337,6 +367,7 @@ struct VendorInfo
     std::string version;
     VendorFeatures features;
     std::vector<PrinterFamilyInfo> printer_families;
+    DeprecatedIdMapping deprecated_ids;
 };
 
 struct VendorData

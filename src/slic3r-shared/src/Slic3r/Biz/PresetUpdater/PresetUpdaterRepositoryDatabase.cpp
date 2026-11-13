@@ -22,27 +22,23 @@ namespace fs = boost::filesystem;
 
 namespace Slic3r::Biz::PresetUpdater {
 
+namespace {
+
+std::set<std::string> read_acknowledged_vendors(const nlohmann::json& repo_json)
+{
+    const std::vector<std::string> listed =
+        repo_json.value("acknowledged_vendors", std::vector<std::string>{});
+    return std::set<std::string>(listed.begin(), listed.end());
+}
+
+} // namespace
+
 PresetUpdaterRepositoryDatabase::PresetUpdaterRepositoryDatabase(PresetUpdaterProcessStatus* process_status)
 {
-    boost::system::error_code ec;
-    m_unq_tmp_path = Slic3r::temp_dir() / fs::unique_path();
-    if (!fs::create_directories(m_unq_tmp_path, ec) && ec) {
-        process_status->set_error(
-            fmt::format("Failed to create temp directory {}: {}.", m_unq_tmp_path.string(), ec.what())
-        , PresetUpdaterReason::DataDirUnusable);
-        return;
-    }
     load_app_manifest_json(process_status);
 }
 
-PresetUpdaterRepositoryDatabase::~PresetUpdaterRepositoryDatabase()
-{
-    boost::system::error_code ec;
-    fs::remove_all(m_unq_tmp_path, ec);
-    if (ec) {
-        SPDLOG_ERROR("Failed to remove temp directory {}: {}", m_unq_tmp_path.string(), ec.what());
-    }
-}
+PresetUpdaterRepositoryDatabase::~PresetUpdaterRepositoryDatabase() = default;
 
 void PresetUpdaterRepositoryDatabase::add_local_repository(
     const boost::filesystem::path& zip_path,
@@ -243,6 +239,9 @@ void PresetUpdaterRepositoryDatabase::load_app_manifest_json(PresetUpdaterProces
                         selected
                     )
                 );
+                m_all_repositories.back()->set_acknowledged_vendors(
+                    read_acknowledged_vendors(repo_json)
+                );
             } else {
                 // Online repo
                 PresetUpdaterRepositoryDescriptor descriptor;
@@ -267,6 +266,9 @@ void PresetUpdaterRepositoryDatabase::load_app_manifest_json(PresetUpdaterProces
                         std::move(descriptor),
                         selected
                     )
+                );
+                m_all_repositories.back()->set_acknowledged_vendors(
+                    read_acknowledged_vendors(repo_json)
                 );
             }
         }
@@ -343,6 +345,9 @@ void PresetUpdaterRepositoryDatabase::save_app_manifest_json(PresetUpdaterProces
                 {"unzipped_data_path", descriptor.unzipped_data_path.string()},
                 {"zip_path", descriptor.zip_path.string()}
             };
+            if (!repo->acknowledged_vendors().empty()) {
+                sub["acknowledged_vendors"] = repo->acknowledged_vendors();
+            }
             json.push_back(sub);
         } else {
             nlohmann::json sub = {
@@ -355,6 +360,9 @@ void PresetUpdaterRepositoryDatabase::save_app_manifest_json(PresetUpdaterProces
                 {"index_url", descriptor.index_url},
                 {"selected", repo.get()->is_selected()}
             };
+            if (!repo->acknowledged_vendors().empty()) {
+                sub["acknowledged_vendors"] = repo->acknowledged_vendors();
+            }
             json.push_back(sub);
         }
     }
@@ -427,8 +435,10 @@ void PresetUpdaterRepositoryDatabase::read_server_manifest(
 
     // Remember selected repos
     std::map<std::string, bool> uuid_selected_map;
+    std::map<std::string, std::set<std::string>> uuid_acknowledged_map;
     for (const auto& repo_ptr : m_all_repositories) {
-        uuid_selected_map[repo_ptr->uuid()] = repo_ptr->is_selected();
+        uuid_selected_map[repo_ptr->uuid()]     = repo_ptr->is_selected();
+        uuid_acknowledged_map[repo_ptr->uuid()] = repo_ptr->acknowledged_vendors();
     }
 
     // Make a stash of secret repos that are online and is selected.
@@ -497,6 +507,13 @@ void PresetUpdaterRepositoryDatabase::read_server_manifest(
                     true
                 )
             );
+        }
+    }
+
+    for (const auto& repo_ptr : m_all_repositories) {
+        const auto acknowledged = uuid_acknowledged_map.find(repo_ptr->uuid());
+        if (acknowledged != uuid_acknowledged_map.end()) {
+            repo_ptr->set_acknowledged_vendors(acknowledged->second);
         }
     }
 
@@ -617,6 +634,28 @@ void PresetUpdaterRepositoryDatabase::apply_selection(
     save_app_manifest_json(process_status);
 }
 
+void PresetUpdaterRepositoryDatabase::acknowledge_vendors(
+    const std::map<std::string, std::vector<std::string>>& vendors_by_repo_id,
+    PresetUpdaterProcessStatus* process_status
+)
+{
+    bool added = false;
+    for (const auto& [repo_id, vendor_ids] : vendors_by_repo_id) {
+        for (const auto& repo_ptr : m_all_repositories) {
+            if (repo_ptr->descriptor().id != repo_id) {
+                continue;
+            }
+            const size_t before = repo_ptr->acknowledged_vendors().size();
+            repo_ptr->acknowledge_vendors(vendor_ids);
+            added = added || repo_ptr->acknowledged_vendors().size() != before;
+        }
+    }
+
+    if (added) {
+        save_app_manifest_json(process_status);
+    }
+}
+
 void PresetUpdaterRepositoryDatabase::consolidate_offline_repo_unzipped_folders(PresetUpdaterProcessStatus* process_status) const
 {
     boost::system::error_code ec;
@@ -715,7 +754,6 @@ bool PresetUpdaterRepositoryDatabase::sync(PresetUpdaterProcessStatus* process_s
 {
     std::string manifest;
     bool sync_res = false;
-    process_status->set_download_target(std::string(k_manifest_download_target));
     sync_res = sync_inner(manifest, process_status);
     if (!sync_res) {
         return false;

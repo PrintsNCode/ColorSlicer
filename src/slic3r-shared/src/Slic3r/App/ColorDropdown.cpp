@@ -1,8 +1,10 @@
 #include "Slic3r/App/ColorDropdown.hpp"
+#include "Slic3r/App/ExtruderIcon.hpp"
 #include "Slic3r/App/Imgui/ImguiExtension.hpp"
 #include "Slic3r/Biz/Algorithms/VirtualExtruder.hpp"
 #include "Slic3r/App/Yoga/ImGuiUtils.hpp"
 #include "Slic3r/App/Yoga/Text.hpp"
+#include "Slic3r/Biz/I18N/I18N.hpp"
 
 #include <algorithm>
 #include <imgui_internal.h>
@@ -12,74 +14,11 @@ using Slic3r::Domain::ColorRGB;
 using Slic3r::Domain::ColorRGBA;
 using Slic3r::Domain::SelectionId;
 using Slic3r::Domain::VirtualExtruder;
+using Slic3r::Domain::Preset::SelectedPreset;
 
 using Slic3r::Biz::Algorithms::VirtualExtruder::effective_color;
 
 namespace Slic3r::App::Yoga {
-
-class MulticolorCircle : public Yoga::Item
-{
-public:
-    void render(const Vec2f& pos, const Vec2f& size)
-    {
-        render_item_begin(pos, size);
-
-        ImRect rect(to_im(pos), to_im(pos + size));
-
-        ImDrawList* draw_list = ImGui::GetWindowDrawList();
-        ASSERT(draw_list);
-
-        const ImVec2 center{rect.GetCenter()};
-        const float radius{0.5f * rect.GetHeight()};
-        constexpr int circle_segments{64};
-
-        ASSERT(!m_colors.empty());
-        if (m_colors.size() == 1) {
-            draw_list->AddCircleFilled(center, radius, m_colors.front(), circle_segments);
-        } else {
-            const float step{2.0f * IM_PI / static_cast<float>(m_colors.size())};
-            constexpr float start_angle{0.5f * IM_PI};
-            const int segments_per_sector{std::max(
-                2,
-                static_cast<int>((circle_segments + m_colors.size() - 1) / m_colors.size()))};
-
-            for (std::size_t i{}; i < m_colors.size(); ++i) {
-                const float angle_start{start_angle + static_cast<float>(i) * step};
-                const float angle_end{angle_start + step};
-
-                draw_list->PathClear();
-                draw_list->PathLineTo(center);
-                draw_list->PathArcTo(center, radius, angle_start, angle_end, segments_per_sector);
-                draw_list->PathFillConvex(m_colors[i]);
-            }
-        }
-
-        if (m_border_width > 0) {
-            draw_list->AddCircle(rect.GetCenter(),
-                                 0.5f * rect.GetHeight(),
-                                 m_border_color,
-                                 36,
-                                 m_border_width);
-        }
-
-        render_item_end(pos, size);
-    }
-
-    void set_colors(const std::vector<ImColor>& colors) {
-        m_colors = colors;
-    }
-    void set_border_width(float width) {
-        m_border_width = width;
-    }
-    void set_border_color(const ImColor& color) {
-        m_border_color = color;
-    }
-
-private:
-    std::vector<ImColor> m_colors{m_theme->color_imgui(Platform::Color::Text)};
-    ImColor m_border_color{m_theme->color_imgui(Platform::Color::Text)};
-    float m_border_width{};
-};
 
 ColorMenuItem::ColorMenuItem(
     const std::string& label,
@@ -87,7 +26,7 @@ ColorMenuItem::ColorMenuItem(
     bool selectable,
     bool dropdown_indicator,
     bool hollow,
-    std::optional<std::string> index
+    std::optional<size_t> index
 ) :
     m_dropdown_indicator(dropdown_indicator)
 {
@@ -105,11 +44,7 @@ ColorMenuItem::ColorMenuItem(
         set_checkable(true);
     }
 
-    m_swatch = emplace_back<Yoga::MulticolorCircle>();
-    m_text = m_swatch->emplace_back<Text>("");
-    m_text->set_font_type(Render::ImguiFontType::Bold);
-    m_swatch->set_justify_content(YGJustifyCenter);
-    m_swatch->set_align_items(YGAlignFlexStart);
+    m_swatch = emplace_back<ExtruderIcon>();
 
     auto* spacer = emplace_back<Yoga::Item>();
     spacer->set_flex_grow(1);
@@ -121,7 +56,7 @@ void ColorMenuItem::set_entry(
     const std::string& label,
     const std::vector<Domain::ColorRGBA>& colors,
     const bool hollow,
-    std::optional<std::string> index
+    std::optional<size_t> index
 )
 {
     m_label = label;
@@ -134,30 +69,18 @@ void ColorMenuItem::set_entry(
         imgui_colors.push_back(m_theme->color_imgui(Platform::Color::Text));
     }
 
-    m_text->set_text_color(Imgui::contrast_color(imgui_colors.front()));
-
     if (hollow) {
-        m_swatch->set_width(10_fpx);
-        m_swatch->set_height(10_fpx);
-        const Unit margin{3_fpx};
-        m_swatch->set_margin({margin, margin, margin, margin});
-        m_swatch->set_colors({m_theme->color_imgui(Platform::Color::Transparent)});
-        m_swatch->set_border_width(1);
-        m_swatch->set_border_color(imgui_colors.front());
+        m_swatch->set_invalid();
     } else {
         m_swatch->set_width(index ? 16_fpx : 14_fpx);
-        m_swatch->set_height(index ? 16_fpx : 14_fpx);
-        m_swatch->set_margin(0);
-        m_swatch->set_colors(imgui_colors);
-        m_swatch->set_padding(0);
-        m_swatch->set_border_width(0);
-        m_swatch->set_border_color(m_theme->color_imgui(Platform::Color::Transparent));
+        m_swatch->set_extruders_colors(imgui_colors);
     }
 
-    ASSERT(m_swatch->items().size() == 1);
-    auto text{dynamic_cast<Text*>(m_swatch->get_item(0))};
-    ASSERT(text);
-    text->set_text(index ? *index : "");
+    if (index) {
+        m_swatch->set_extruder_index(*index);
+    }else {
+        m_swatch->set_extruder_index_visible(false);
+    }
 }
 
 static float fpx(float value) {
@@ -260,6 +183,20 @@ static std::vector<std::pair<ColorRGBA, std::string>> get_material_colors(
         result.push_back({colors[i], names[i]});
     }
     return result;
+}
+
+static std::string get_virtual_extruder_name(
+    const SelectedPreset& selected_preset,
+    const VirtualExtruder& virtual_extruder
+)
+{
+    const bool is_gradient         = virtual_extruder.type() == VirtualExtruder::Type::Gradient;
+    const unsigned int extruder_id = is_gradient ?
+        virtual_extruder.gradient->stops.front().extruder_id :
+        virtual_extruder.components.front().extruder_id;
+
+    ASSERT(extruder_id >= 1 && extruder_id <= selected_preset.materials.size());
+    return "[V] " + std::string{selected_preset.materials[extruder_id - 1].short_name()};
 }
 
 ColorDropdown::ColorDropdown(
@@ -381,7 +318,10 @@ void ColorDropdown::reload_items()
     const SelectionId container_id = m_project_interactor.selected_config_container_id();
 
     const std::vector<ColorRGB> slot_colors =
-        m_project_interactor.project_settings_interactor().get_colors(container_id);
+        m_project_interactor.project_settings_interactor().get_colors(
+            m_project_interactor.selected_project_id(),
+            container_id
+        );
 
     std::vector<std::pair<ColorRGBA, std::string>> items =
         get_material_colors(m_project_interactor, slot_colors);
@@ -400,7 +340,10 @@ void ColorDropdown::reload_items()
 
             items.emplace_back(
                 ColorRGBA{color.r(), color.g(), color.b(), 1.f},
-                "[V] " + Biz::_u8L("Extruder") + " " + std::to_string(virtual_extruder.id)
+                get_virtual_extruder_name(
+                    m_project_interactor.preset_interactor().selected_printer_preset(),
+                    virtual_extruder
+                )
             );
             m_extruder_ids.push_back(static_cast<int>(virtual_extruder.id));
         }
@@ -624,7 +567,7 @@ struct Label
     std::vector<Domain::ColorRGBA> colors;
     std::string name;
     bool hollow{};
-    std::optional<std::string> index;
+    std::optional<size_t> index;
 };
 
 Label get_label(
@@ -647,6 +590,7 @@ Label get_label(
     const Label unkown_label{
         .colors = {Domain::ColorRGBA::RED()},
         .name  = fmt::format(
+            // TRN {} is the number of an extruder that does not exist in the current printer
             fmt::runtime(Biz::_u8L("Invalid extruder ({})")),
             with_default ? *index : *index + 1
         ),
@@ -669,7 +613,7 @@ Label get_label(
                 return {
                     .colors = {color},
                     .name  = name,
-                    .index = with_numbers ? std::optional{std::to_string(*index)} : std::nullopt
+                    .index = with_numbers ? index : std::nullopt
                 };
             }
         }
@@ -681,7 +625,7 @@ Label get_label(
             return {
                 .colors = {color},
                 .name  = name,
-                .index = with_numbers ? std::optional{std::to_string(*index + 1)} : std::nullopt
+                .index = with_numbers ? std::optional{*index + 1} : std::nullopt
             };
         }
     }
@@ -700,14 +644,14 @@ void ColorDropdown::rebuild_popup_items()
     };
 
     for (std::size_t index{}; index < items_count; ++index) {
-        const auto& [colors, name, hollow, index_string]{get_label(index,
+        const auto& [colors, name, hollow, index_id]{get_label(index,
                                                                    m_with_default,
                                                                    m_with_numbers,
                                                                    m_material_colors,
                                                                    m_default_colors,
                                                                    get_default_text())};
         ColorMenuItem* item{
-            m_popup->emplace_back<ColorMenuItem>(name, colors, true, false, hollow, index_string)};
+            m_popup->emplace_back<ColorMenuItem>(name, colors, true, false, hollow, index_id)};
         item->set_checked(index == m_current_index);
         m_popup_items.push_back(item);
         item->callbacks().action = [this, index]()

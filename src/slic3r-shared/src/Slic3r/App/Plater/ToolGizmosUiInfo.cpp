@@ -26,7 +26,7 @@ static const std::unordered_map<Scene::ToolType, ToolGizmoUiInfo> tool_gizmos_ui
       Platform::KeyCode::S,
       Render::Icon::Scale}},
     {Scene::ToolType::PlaceOnFace,
-     {Biz::L("Place On Face"),
+     {Biz::L("Place on face"),
       Platform::CommandName::PlaceOnFace,
       Platform::KeyCode::F,
       Render::Icon::PlaceOnFace}},
@@ -78,15 +78,27 @@ static const std::unordered_map<Scene::ToolType, ToolGizmoUiInfo> tool_gizmos_ui
     {Scene::ToolType::CutGizmo,
      {Biz::L("Cut"), Platform::CommandName::CutGizmo, Platform::KeyCode::C, Render::Icon::Cut}},
     {Scene::ToolType::VariableLayerHeightGizmo,
-     {Biz::L("Variable Layer Height"),
+     {Biz::L("Variable layer height"),
       Platform::CommandName::VariableLayerHeightGizmo,
       Platform::KeyCode::V,
       Render::Icon::VariableLayerHeight}},
     {Scene::ToolType::HeightRangeGizmo,
-     {Biz::L("Height Range"),
+     {Biz::L("Height range"),
       Platform::CommandName::HeightRangeGizmo,
       Platform::KeyCode::W,
       Render::Icon::HeightRange}},
+    // Same key as the paint-on supports, only one of them is enabled for a printer technology.
+    {Scene::ToolType::SlaSupportPointsGizmo,
+     {Biz::L("SLA support points"),
+      Platform::CommandName::SlaSupportPointsGizmo,
+      Platform::KeyCode::L,
+      Render::Icon::Support}},
+    // Same key as the paint-on fuzzy skin, only one of them is enabled for a printer technology.
+    {Scene::ToolType::SlaHollowGizmo,
+     {Biz::L("Hollow and drill"),
+      Platform::CommandName::SlaHollowGizmo,
+      Platform::KeyCode::H,
+      Render::Icon::Hollowing}},
 };
 
 std::string tool_name(Scene::ToolType tool)

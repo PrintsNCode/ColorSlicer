@@ -13,6 +13,7 @@
 #include "Slic3r/App/Yoga/Rectangle.hpp"
 #include "Slic3r/App/Config/ToolRowControl.hpp"
 #include "Slic3r/App/Yoga/ListView.hpp"
+#include "Slic3r/App/Yoga/LayoutButton.hpp"
 
 namespace Slic3r::Biz {
 class PrintToolConfigBoxInteractor;
@@ -67,6 +68,7 @@ public:
     ) override;
 
     void on_view_will_be_reset() override;
+    void on_view_will_be_removed() override;
 
     void on_preset_selection_changed(
         Domain::SelectionId project_id,
@@ -143,6 +145,7 @@ private:
     PrintToolRowButton* m_main_button{nullptr};
     Yoga::Rectangle* m_content{nullptr};
     ToolRowListView* m_tool_list_view{nullptr};
+    Yoga::LayoutButton* m_effective_value_info{nullptr};
     FavoriteButton* m_favorite_button{nullptr};
     ExplanationContainer* m_explanation_container{nullptr};
     ToolDropArea* m_tool_drop_area{nullptr};

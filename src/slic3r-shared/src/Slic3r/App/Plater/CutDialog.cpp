@@ -176,21 +176,12 @@ CutDialog::CutDialog() : GizmoWindow()
     init_connectors_input_panel();
     init_cut_plane_input_panel();
 
-    // empty item - stretch spacer
-    content()->emplace_back<Item>()->set_flex_grow(1);
-
-    add_separator(content());
     init_action_buttons();
 }
 
 void CutDialog::init_action_buttons()
 {
-    bottom_bar()->set_flex_shrink(0);
-    bottom_bar()->set_padding(2.f * gap_size());
-    bottom_bar()->set_gap(gap_size());
-
-    m_perform_btn = bottom_bar()->emplace_back<LayoutButton>(_u8L("Perform cut"));
-    m_perform_btn->set_flex_grow(1.f);
+    m_perform_btn = add_bottom_bar_button(_u8L("Perform cut"));
     m_perform_btn->callbacks().action = [this]()
     {
         if (callbacks().perform) {
@@ -198,25 +189,20 @@ void CutDialog::init_action_buttons()
         }
     };
 
-    m_confirm_connectors_btn = bottom_bar()->emplace_back<LayoutButton>(
+    m_connectors_btns_wrap = bottom_bar()->emplace_back<Item>();
+    m_connectors_btns_wrap->set_flex_grow(1.f);
+    m_connectors_btns_wrap->set_gap(gap_size());
+    m_confirm_connectors_btn = add_bottom_bar_button(
         _u8L("Confirm"),
+        _u8L("Confirm connectors"),
         Render::Icon::None,
-        _u8L("Confirm connectors")
+        m_connectors_btns_wrap
     );
-    m_confirm_connectors_btn->set_flex_grow(1.f);
     m_confirm_connectors_btn->callbacks().action = [this]() { confirm_connectors(); };
 
-    for (LayoutButton* btn :
-         std::initializer_list<LayoutButton*>{m_perform_btn, m_confirm_connectors_btn})
-    {
-        btn->set_background_color(m_theme->color_imgui(Platform::Color::AccentPrimary));
-        btn->set_label_font_type(Render::ImguiFontType::Bold);
-        btn->set_content_padding(gap_size());
-    }
-
-    m_cancel_connectors_btn = bottom_bar()->emplace_back<LayoutButton>(_u8L("Cancel"));
+    m_cancel_connectors_btn = m_connectors_btns_wrap->emplace_back<LayoutButton>(_u8L("Cancel"));
     m_cancel_connectors_btn->set_background_color(m_theme->color_imgui(Platform::Color::Button));
-    m_cancel_connectors_btn->set_content_padding(gap_size());
+    m_cancel_connectors_btn->set_content_padding(10_fpx);
     m_cancel_connectors_btn->callbacks().action = [this]()
     {
         connectors_editing = false;
@@ -304,7 +290,7 @@ void CutDialog::init_cut_plane_input_panel()
     Item* build_volume_panel =
         add_non_shrinked_wrap(m_cut_plane_input_panel, Orientation::Vertical, gap_size());
 
-    build_volume_panel->emplace_back<Text>(_u8L("Build Volume"))
+    build_volume_panel->emplace_back<Text>(_u8L("Build volume"))
         ->set_font_type(Render::ImguiFontType::Bold);
 
     Item* build_volume = build_volume_panel->emplace_back<Item>();
@@ -470,10 +456,10 @@ void CutDialog::add_groove_input_panel()
     add_angles_row(
         m_groove_input_panel,
         &m_flap_angle,
-        _u8L("Flap Angle"),
+        _u8L("Flap angle"),
         _u8L("Revert flap angle"),
         &m_groove_angle,
-        _u8L("Groove Angle"),
+        _u8L("Groove angle"),
         _u8L("Revert groove angle")
     );
 
@@ -586,8 +572,7 @@ void CutDialog::update_state(OutState state)
     m_perform_btn->set_visible(!connectors_editing);
     m_perform_btn->set_enabled(!has_warnings);
 
-    m_confirm_connectors_btn->set_visible(connectors_editing);
-    m_cancel_connectors_btn->set_visible(connectors_editing);
+    m_connectors_btns_wrap->set_visible(connectors_editing);
 
     m_connectors_warnings.clear();
 
@@ -748,18 +733,18 @@ void CutDialog::confirm_connectors()
 
 void CutDialog::init_connectors_header()
 {
-    top_bar()->set_gap(10.);
+    top_bar()->set_gap(10_fpx);
     top_bar()->set_orientation(Orientation::Vertical);
-    top_bar()->set_padding(5.f);
+    top_bar()->set_padding(5_fpx);
 
     Item* header = top_bar()->emplace_back<Item>();
     header->set_gap(gap_size());
-    header->set_padding(5.f);
+    header->set_padding(5_fpx);
     header->set_align_items(YGAlignCenter);
     header->set_flex_shrink(0);
     LayoutButton* back_btn = header->emplace_back<LayoutButton>("", Render::Icon::ChevronLeft);
     back_btn->callbacks().action = [this]() { confirm_connectors(); };
-    back_btn->set_height(24.f);
+    back_btn->set_height(24_fpx);
     Text* text = header->emplace_back<Text>(_u8L("Connectors"));
     text->set_self_align(YGAlignCenter);
     text->set_font_type(Render::ImguiFontType::Bold);
@@ -774,7 +759,7 @@ void CutDialog::init_connectors_header()
         }
     };
 
-    add_separator(top_bar())->set_margin({ 0, -5.f, 0, 0 });
+    add_separator(top_bar())->set_margin({ 0, -5_fpx, 0, 0 });
 }
 
 void CutDialog::init_connectors_input_panel()

@@ -8,7 +8,7 @@
 #include "Slic3r/Assert.hpp"
 #include "Slic3r/Log.hpp"
 
-#include "Slic3r/Biz/Algorithms/MiniZWrapper.hpp"
+#include "Slic3r/Biz/Algorithms/ZipArchive.hpp"
 
 #include <boost/filesystem/operations.hpp>
 #include <boost/filesystem/directory.hpp>
@@ -22,9 +22,6 @@ namespace fs                     = boost::filesystem;
 static const char* TMP_EXTENSION = ".download";
 
 namespace Slic3r::Biz::PresetUpdater {
-
-using Algorithms::open_zip_reader;
-using Algorithms::close_zip_reader;
 
 namespace {
 
@@ -51,22 +48,21 @@ void delete_path_recursive(const fs::path& path)
 bool unzip_repository(const fs::path& source_path, const fs::path& target_path)
 {
     boost::system::error_code ec;
-    mz_zip_archive archive;
-    mz_zip_zero_struct(&archive);
-    if (!open_zip_reader(&archive, source_path.string())) {
+    Algorithms::ZipArchive archive =
+        Algorithms::ZipArchive::open(source_path.string(), Algorithms::ZipArchive::Mode::Read);
+    if (!archive.is_open()) {
         SPDLOG_ERROR("Couldn't open zipped Archive source. {}", source_path.string());
         return false;
     }
-    size_t num_files = mz_zip_reader_get_num_files(&archive);
+    const size_t num_files = archive.get_num_files();
 
     for (size_t i = 0; i < num_files; ++i) {
         mz_zip_archive_file_stat file_stat;
-        if (!mz_zip_reader_file_stat(&archive, i, &file_stat)) {
+        if (!archive.stat_file(i, file_stat)) {
             SPDLOG_ERROR(
                 "Failed to get file stat for file #{} in the zip archive. Ending Unzipping.",
                 std::to_string(i)
             );
-            close_zip_reader(&archive);
             return false;
         }
         fs::path extracted_path = target_path / file_stat.m_filename;
@@ -88,13 +84,11 @@ bool unzip_repository(const fs::path& source_path, const fs::path& target_path)
             return false;
         }
         // Extract file
-        if (!mz_zip_reader_extract_to_file(&archive, i, extracted_path.string().c_str(), 0)) {
+        if (!archive.extract_to_file(i, extracted_path.string())) {
             SPDLOG_ERROR("Failed to extract file #{} from the zip archive. Ending Unzipping.", i);
-            close_zip_reader(&archive);
             return false;
         }
     }
-    close_zip_reader(&archive);
     return true;
 }
 
@@ -206,7 +200,17 @@ bool OnlinePresetUpdaterRepository::get_file_inner(
             boost::nowide::fstream file(tmp_path, std::ios::out | std::ios::binary | std::ios::trunc);
             file.write(body.c_str(), body.size());
             file.close();
-            safe_move(tmp_path, target_path);
+
+            // Same directory, so this is a rename. Copying here would write every downloaded
+            // byte to disk a second time.
+            if (const std::error_code ec = Utils::rename_file(tmp_path.string(), target_path.string()); ec) {
+                SPDLOG_ERROR(
+                    "Failed to move downloaded file to {}: {}", target_path.string(), ec.message()
+                );
+                boost::system::error_code remove_ec;
+                fs::remove(tmp_path, remove_ec);
+                return;
+            }
             res = true;
         })
         .perform_sync(process_status->get_retry_policy());
@@ -232,8 +236,6 @@ bool OnlinePresetUpdaterRepository::get_file(
     PresetUpdaterProcessStatus* process_status
 ) const
 {
-    process_status->set_download_target(target_path.filename().string());
-
     const std::string escaped_source_subpath = Network::IHttp::escape_path_by_element(
         fs::path(source_subpath)
     );
@@ -247,8 +249,6 @@ bool OnlinePresetUpdaterRepository::get_version_manifest(
     PresetUpdaterProcessStatus* process_status
 ) const
 {
-    process_status->set_download_target(target_path.filename().string());
-
     const std::string escaped_source_subpath = Network::IHttp::escape_path_by_element(
         fs::path(source_subpath)
     );

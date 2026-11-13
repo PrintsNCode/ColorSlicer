@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Slic3r/Biz/PresetUpdater/PresetUpdaterProgress.hpp"
 #include "Slic3r/Biz/PresetUpdater/PresetUpdaterWarning.hpp"
 
 #include "Slic3r/Assert.hpp"
@@ -23,8 +24,7 @@ public:
         PURP_NO_RETRY,
     };
 
-    typedef std::function<void(const std::string& /* target */, int /* attempt */, unsigned /* delay */)>
-        StatusChangedFn;
+    typedef std::function<void(const PresetUpdaterProgress&)> StatusChangedFn;
 
     // called from PresetUpdaterWrapper
     PresetUpdaterProcessStatus(JThread::StopToken stop_token, StatusChangedFn status_fn, PresetUpdaterRetryPolicy retry_policy, bool ignore_hash = false);
@@ -106,14 +106,22 @@ public:
         return m_retry_policy;
     }
 
-    void set_access_token(const std::string& token)
+    /**
+     * @brief Sets how the current access token is obtained.
+     *
+     * The account service rotates the token every few minutes and stops honouring the previous
+     * one, so a job that outlives a rotation has to ask again instead of carrying a copy. The
+     * provider is called on the job thread, once per request, and may block while a rotation
+     * is in flight, so it receives the job's stop token.
+     */
+    void set_access_token_provider(std::function<std::string(JThread::StopToken)> provider)
     {
-        m_access_token = token;
+        m_access_token_provider = std::move(provider);
     }
 
     std::string access_token() const
     {
-        return m_access_token;
+        return m_access_token_provider ? m_access_token_provider(m_stop_token) : std::string{};
     }
 
     bool on_attempt(int attempt, unsigned delay);
@@ -130,12 +138,20 @@ public:
         m_warning_target_vendor = {};
     }
 
-    void set_download_target(const std::string& target)
-    {
-        m_download_target = target;
-    }
+    /**
+     * @brief Names the vendor being worked on and what is happening to it.
+     *
+     * Reported straight away, and again with every later network attempt, until the next call
+     * replaces it.
+     */
+    void set_step(PresetUpdaterStep step, std::string vendor_id, std::string version = {});
 
-    void set_install_target(const std::string& target);
+    /// Places the current vendor in the batch, for a job that walks several of them.
+    void set_batch_position(std::size_t index, std::size_t total)
+    {
+        m_progress.index = index;
+        m_progress.total = total;
+    }
 
     bool has_vendor_warning(const std::string& repo, const std::string& vendor) const
     {
@@ -155,9 +171,9 @@ private:
     std::vector<PresetUpdaterWarning> m_warnings;
     std::string m_warning_target_repo;
     std::string m_warning_target_vendor;
-    std::string m_download_target;
+    PresetUpdaterProgress m_progress;
     Network::HttpRetryOpt m_retry_policy;
-    std::string m_access_token;
+    std::function<std::string(JThread::StopToken)> m_access_token_provider;
     StatusChangedFn m_dispatch_status_fn;
 
     JThread::StopToken m_stop_token;

@@ -124,11 +124,20 @@ STRUCT_DESC(
 );
 
 STRUCT_DESC(
+    PresetFeatures,
+    FIELD_DESC(printer, FIELD_DEFAULT, {}, FIELD_DEFAULT),
+    FIELD_DESC(print, FIELD_DEFAULT, {}, FIELD_DEFAULT),
+    FIELD_DESC(toolprint, FIELD_DEFAULT, {}, FIELD_DEFAULT),
+    FIELD_DESC(material, FIELD_DEFAULT, {}, FIELD_DEFAULT)
+);
+
+STRUCT_DESC(
     VendorFeatures,
     FIELD_DESC(printer, FIELD_DEFAULT, {}, FIELD_DEFAULT),
     FIELD_DESC(tool, FIELD_DEFAULT, {}, FIELD_DEFAULT),
     FIELD_DESC(feeder, FIELD_DEFAULT, {}, FIELD_DEFAULT),
-    FIELD_DESC(sheet, FIELD_DEFAULT, {}, FIELD_DEFAULT)
+    FIELD_DESC(sheet, FIELD_DEFAULT, {}, FIELD_DEFAULT),
+    FIELD_DESC(presets, FIELD_DEFAULT, {}, FIELD_DEFAULT)
 );
 
 STRUCT_DESC(
@@ -139,12 +148,32 @@ STRUCT_DESC(
 );
 
 STRUCT_DESC(
+    ModelIdMapping,
+    FIELD_DESC_IMPLICIT_VALUE(model, {}),
+    FIELD_DESC_IMPLICIT_VALUE(base_model, {})
+);
+
+STRUCT_DESC(
+    ComponentIdMapping,
+    FIELD_DESC_IMPLICIT_VALUE(id, {}),
+    FIELD_DESC_IMPLICIT_VALUE(model, {})
+);
+
+STRUCT_DESC(
+    DeprecatedIdMapping,
+    FIELD_DESC_IMPLICIT_VALUE(printer, {}),
+    FIELD_DESC_IMPLICIT_VALUE(tool, {}),
+    FIELD_DESC_IMPLICIT_VALUE(feeder, {})
+);
+
+STRUCT_DESC(
     VendorInfo,
     FIELD_DESC_SIMPLE(id),
     FIELD_DESC_SIMPLE(name),
     FIELD_DESC_SIMPLE(version),
     FIELD_DESC_SIMPLE(features),
-    FIELD_DESC_IMPLICIT_VALUE(printer_families, {})
+    FIELD_DESC_IMPLICIT_VALUE(printer_families, {}),
+    FIELD_DESC_IMPLICIT_VALUE(deprecated_ids, {})
 );
 
 namespace Slic3r::Biz::Preset::IO {

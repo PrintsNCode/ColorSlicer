@@ -11,6 +11,7 @@
 #include "Slic3r/App/AppConfig.hpp"
 #include "Slic3r/App/AppConfigInteractor.hpp"
 #include "Slic3r/App/IDialogManager.hpp"
+#include "Slic3r/App/PresetUpdater/PresetUpdaterController.hpp"
 #include "Slic3r/App/ProjectSaver.hpp"
 #include <Slic3r/App/WX/WidgetsConfig.hpp>
 #include <Slic3r/App/WX/StringConversions.hpp>
@@ -20,6 +21,7 @@
 #include <Slic3r/App/WX/WebView/WebViewFactory.hpp>
 
 #include <Slic3r/App/Localization.hpp>
+#include "Slic3r/App/AbstractRenderLayout.hpp"
 #include "Slic3r/App/Navigator.hpp"
 #include "Slic3r/App/MenuManager.hpp"
 #include "Slic3r/App/Browser/BrowserLogicPrintables.hpp"
@@ -357,8 +359,16 @@ void MainFrame::on_app_config_changed(const std::string& key)
         }
     }
 
+    if (key == "enable_preset_update") {
+        if (AppServices::instance().has_preset_updater_controller()) {
+            AppServices::instance().preset_updater_controller().on_online_allowed_changed();
+        }
+    }
+
     if (key == "graphics_quality") {
         update_graphics_settings();
+    } else if (key == "transparent_window_alpha") {
+        AppServices::instance().theme().set_transparent_window_alpha(app_config.get<double>(key));
     }
     else if (key == "translation_language") {
         if (const std::string new_language = app_config.get<std::string>("translation_language");
@@ -370,6 +380,8 @@ void MainFrame::on_app_config_changed(const std::string& key)
             std::string message = fmt::format(
                 fmt::runtime(
                     Biz::_u8L(
+                        // TRN {} is the English name of the selected language,
+                        // e.g. "Czech (Czechia)"
                         "The selected language \"{}\" has been saved and will be applied the next time the application starts."
                     )
                 ),
@@ -662,15 +674,15 @@ static std::string build_physical_printer_url(const std::string& host)
 void MainFrame::init_physical_printer_page(Biz::ProjectInteractor& project_interactor)
 {
     assert(!m_physical_printer_page_added);
-    const auto selected_printer = project_interactor.physical_printer_interactor().selected_physical_printer_data();
-    const auto* payload = std::get_if<Slic3r::Biz::PhysicalPrinter::PrinterUpload>(&selected_printer.payload);
+    const auto* selected_printer = project_interactor.physical_printer_interactor().selected_physical_printer_data();
+    const auto* payload = selected_printer ? std::get_if<Slic3r::Biz::PhysicalPrinter::PrinterUpload>(&selected_printer->payload) : nullptr;
     if (!payload) {
         return;
     }
-    std::string url = build_physical_printer_url(selected_printer.host);
+    std::string url = build_physical_printer_url(selected_printer->host);
     std::unique_ptr<App::Browser::BrowserLogicPhysicalPrinter> logic = std::make_unique<App::Browser::BrowserLogicPhysicalPrinter>(url, payload->api_key, payload->username, payload->password);
     WX::WebView::AbstractWebViewPanel* webview_panel = WebView::new_web_view_panel(m_left_bar, static_cast<int>(LeftBarTabs::PhysicalPrinter), std::move(logic), false);
-    m_left_bar->InsertNewPage(get_tab_insert_index(m_left_bar, LeftBarTabs::PhysicalPrinter), webview_panel, WX::_L("Physical Printer"), "lb_printers");
+    m_left_bar->InsertNewPage(get_tab_insert_index(m_left_bar, LeftBarTabs::PhysicalPrinter), webview_panel, WX::_L("Physical printer"), "lb_printers");
     webview_panel->set_switch_left_tab_fn(std::bind(&MainFrame::switch_left_tab, this, std::placeholders::_1, std::placeholders::_2));
     m_physical_printer_page_added = true;
 }
@@ -739,13 +751,27 @@ void MainFrame::on_user_account_enabled_state_changed(bool is_enabled)
     ensure_slicing_page_selected();
 }
 
-void MainFrame::on_selected_physical_printer_changed() 
+void MainFrame::on_user_account_id_success(bool is_refresh, const std::string& username)
+{
+    if (!is_refresh && AppServices::instance().has_preset_updater_controller()) {
+        AppServices::instance().preset_updater_controller().on_logged_in();
+    }
+}
+
+void MainFrame::on_user_account_logged_out()
+{
+    if (AppServices::instance().has_preset_updater_controller()) {
+        AppServices::instance().preset_updater_controller().on_logged_out();
+    }
+}
+
+void MainFrame::on_selected_physical_printer_changed()
 {
     ASSERT(m_left_bar);
 
+    bool show_physicial_printer_page =
+        m_project_interactor.physical_printer_interactor().is_printer_upload_selected();
 
-    bool show_physicial_printer_page = m_project_interactor.physical_printer_interactor().is_printer_upload_selected();
-    
     if (m_physical_printer_page_added) {
         remove_left_bar_page(LeftBarTabs::PhysicalPrinter);
         m_physical_printer_page_added = false;
@@ -756,43 +782,6 @@ void MainFrame::on_selected_physical_printer_changed()
     }
 
     ensure_slicing_page_selected();
-}
-
-void MainFrame::on_printer_data_changed()
-{
-    ASSERT(m_left_bar);
-
-    if (!m_physical_printer_page_added) {
-        return;
-    }
-
-    auto& physical_printer_interactor = m_project_interactor.physical_printer_interactor();
-    if (!physical_printer_interactor.is_printer_upload_selected()) {
-        return;
-    }
-
-    const auto selected_printer = physical_printer_interactor.selected_physical_printer_data();
-    const auto* payload = std::get_if<Slic3r::Biz::PhysicalPrinter::PrinterUpload>(&selected_printer.payload);
-    if (!payload) {
-        return;
-    }
-
-    size_t page_index = get_tab_index_by_id(m_left_bar, LeftBarTabs::PhysicalPrinter);
-    if (page_index == size_t(-1)) {
-        return;
-    }
-
-    auto* webview_panel = dynamic_cast<WX::WebView::AbstractWebViewPanel*>(m_left_bar->GetPage(page_index));
-    if (!webview_panel) {
-        return;
-    }
-
-    auto* logic = dynamic_cast<App::Browser::BrowserLogicPhysicalPrinter*>(webview_panel->browser_logic());
-    if (!logic) {
-        return;
-    }
-
-    logic->update_connection(build_physical_printer_url(selected_printer.host), payload->api_key, payload->username, payload->password);
 }
 
 void MainFrame::on_menu_updated()

@@ -10,6 +10,7 @@ struct CommandName
     static constexpr const char* DeleteSelected  = "delete-selected";
     static constexpr const char* CopyModelItems  = "copy-selected";
     static constexpr const char* PasteModelItems = "paste-model-items";
+    static constexpr const char* RenameSelected  = "rename-selected";
 
     static constexpr const char* NewProject    = "new-project";
     static constexpr const char* OpenProject   = "open-project";
@@ -40,6 +41,8 @@ struct CommandName
     static constexpr const char* MultiMaterialPaintingGizmo = "multi-material-painting-gizmo";
     static constexpr const char* VariableLayerHeightGizmo   = "variable-layer-height-gizmo";
     static constexpr const char* HeightRangeGizmo           = "height-range-gizmo";
+    static constexpr const char* SlaSupportPointsGizmo      = "sla-support-points-gizmo";
+    static constexpr const char* SlaHollowGizmo             = "sla-hollow-gizmo";
 
     static constexpr const char* SwitchToPlater  = "switch-to-plater";
     static constexpr const char* SwitchToPreview = "switch-to-preview";
@@ -91,6 +94,7 @@ struct CommandName
     static constexpr const char* FlashPrinterFirmware = "flash-printer-firmware";
 
     static constexpr const char* ImportGeometry = "import-geometry";
+    static constexpr const char* ImportZip      = "import-zip";
 
     static constexpr const char* ExportGcode        = "export-gcode";
     static constexpr const char* SendGcode          = "send-gcode";
@@ -124,5 +128,6 @@ struct CommandName
     static constexpr const char* PluginRescan = "plugin-rescan";
     static constexpr const char* PluginFolder = "plugin-folder";
     static constexpr const char* PluginInstall = "plugin-install";
+    static constexpr const char* PluginMarketplace = "plugin-marketplace";
 };
 } // namespace Slic3r::App::Platform

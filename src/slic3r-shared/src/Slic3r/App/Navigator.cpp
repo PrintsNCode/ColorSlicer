@@ -5,6 +5,7 @@
 #include "Slic3r/App/Platform/AbstractRenderCanvas.hpp"
 #include "Slic3r/App/AppServices.hpp"
 #include "Slic3r/App/AppConfigInteractor.hpp"
+#include "Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 
 #include "Slic3r/Log.hpp"
@@ -64,6 +65,10 @@ void Navigator::on_init(
     AppServices::instance().app_config_interactor().add_listener<IAppConfigChangedListener>(this);
 }
 
+void Navigator::shutdown() {
+    m_project_contexts = {};
+}
+
 bool Navigator::has_modules() const
 {
     return m_project_contexts != nullptr;
@@ -96,6 +101,22 @@ void Navigator::set_render_module_type(Render::ModuleType type)
     }
 }
 
+RenderModuleBase* Navigator::current_render_module()
+{
+    ProjectContext& context = m_project_contexts->selected();
+    switch (context.type) {
+    case Render::ModuleType::Plater:
+        return m_plater_module;
+    case Render::ModuleType::Preview:
+        return m_preview_module;
+    case Render::ModuleType::Undef:
+        return nullptr;
+    }
+
+    PANIC("Project context.type is unhandled!");
+    return nullptr;
+}
+
 void Navigator::on_selected_project_changed(size_t index)
 {
     if (!has_modules()) {
@@ -111,18 +132,7 @@ void Navigator::set_opened_dialog(Yoga::Dialog* opened_dialog)
     if (!has_modules()) {
         return;
     }
-    ProjectContext& context = m_project_contexts->selected();
-    context.opened_dialog   = opened_dialog;
-    switch (context.type) {
-    case Render::ModuleType::Plater:
-        m_plater_module->set_opened_dialog(opened_dialog);
-        break;
-    case Render::ModuleType::Preview:
-        m_preview_module->set_opened_dialog(opened_dialog);
-        break;
-    case Render::ModuleType::Undef:
-        break;
-    }
+    current_render_module()->set_opened_dialog(opened_dialog);
 }
 
 void Navigator::navigate_to_item(const Domain::ConfigItem* config_item)
@@ -145,19 +155,13 @@ void Navigator::request_search()
     m_plater_module->open_search();
 }
 
-void Navigator::open_invalid_data_dialog()
+void Navigator::open_effective_values_dialog(std::optional<std::string> key)
 {
-    ProjectContext& context = m_project_contexts->selected();
-    switch (context.type) {
-    case Render::ModuleType::Plater:
-        m_plater_module->open_invalid_data_dialog();
-        break;
-    case Render::ModuleType::Preview:
-        m_preview_module->open_invalid_data_dialog();
-        break;
-    case Render::ModuleType::Undef:
-        break;
+    if (!has_modules()) {
+        return;
     }
+    current_render_module()->set_effective_values_key(key);
+    set_modal_dialog(ModalDialog::EffectiveValues);
 }
 
 void Navigator::set_modal_dialog(ModalDialog modal_dialog)
@@ -165,17 +169,9 @@ void Navigator::set_modal_dialog(ModalDialog modal_dialog)
     if (!has_modules()) {
         return;
     }
-    ProjectContext& context = m_project_contexts->selected();
-    switch (context.type) {
-    case Render::ModuleType::Plater:
-        m_plater_module->set_modal_dialog(modal_dialog);
-        break;
-    case Render::ModuleType::Preview:
-        m_preview_module->set_modal_dialog(modal_dialog);
-        break;
-    case Render::ModuleType::Undef:
-        break;
-    }
+    m_current_modal_dialog = modal_dialog;
+    current_render_module()->set_modal_dialog(modal_dialog);
+    m_current_modal_dialog = modal_dialog;
 
     if (m_callbacks.modal_dialog_changed) {
         m_callbacks.modal_dialog_changed(modal_dialog);
@@ -207,6 +203,95 @@ void Navigator::set_object_list_collapsed(bool collapsed)
         m_plater_module->set_object_list_collapsed(collapsed);
         m_preview_module->set_object_list_collapsed(collapsed);
     }
+}
+
+void Navigator::pick_color(
+    const std::string& title,
+    const Domain::ColorRGB& input_color,
+    FnColorPicked fn_color_picked,
+    FnCancelled fn_cancelled,
+    DialogButtons buttons
+)
+{
+    current_render_module()
+        ->msg_box_handler()
+        ->pick_color(title, input_color, fn_color_picked, fn_cancelled, buttons);
+    set_modal_dialog(ModalDialog::MsgBox);
+}
+
+void Navigator::input_text(
+    const std::string& title,
+    const std::string& text,
+    const std::string& input_text,
+    FnAcceptedText fn_accepted_text,
+    FnCancelled fn_cancelled,
+    DialogButtons buttons,
+    bool multiline
+)
+{
+    current_render_module()
+        ->msg_box_handler()
+        ->input_text(title, text, input_text, fn_accepted_text, fn_cancelled, buttons, multiline);
+    set_modal_dialog(ModalDialog::MsgBox);
+}
+
+void Navigator::yes_no_cancel(
+    const std::string& title,
+    const std::string& text,
+    FnAccepted fn_accepted,
+    FnRejected fn_rejected,
+    FnCancelled fn_cancelled,
+    DialogButtons buttons
+)
+{
+    current_render_module()
+        ->msg_box_handler()
+        ->yes_no_cancel(title, text, fn_accepted, fn_rejected, fn_cancelled, buttons);
+    set_modal_dialog(ModalDialog::MsgBox);
+}
+
+void Navigator::input_number(
+    const std::string& title,
+    const std::string& text,
+    const std::string& prompt,
+    int value,
+    int min,
+    int max,
+    FnAcceptedNumber fn_accepted_number,
+    FnCancelled fn_cancelled,
+    DialogButtons buttons
+)
+{
+    current_render_module()->msg_box_handler()->input_number(
+        title,
+        text,
+        prompt,
+        value,
+        min,
+        max,
+        fn_accepted_number,
+        fn_cancelled,
+        buttons
+    );
+    set_modal_dialog(ModalDialog::MsgBox);
+}
+
+bool Navigator::confirm_open_files(
+    std::vector<Biz::FileOpen::ArchiveFile> files,
+    Biz::FileOpen::OpenFilesOptions options,
+    std::function<void(std::optional<Biz::FileOpen::ArchiveSelection>)> done
+)
+{
+    if (is_any_modal_dialog_opened()) {
+        return false;
+    }
+    current_render_module()->msg_box_handler()->confirm_open_files(
+        std::move(files),
+        options,
+        std::move(done)
+    );
+    set_modal_dialog(ModalDialog::MsgBox);
+    return true;
 }
 
 bool Navigator::has_fullscreen() const

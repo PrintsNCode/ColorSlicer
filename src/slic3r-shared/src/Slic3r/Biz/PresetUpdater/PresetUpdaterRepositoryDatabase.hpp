@@ -66,6 +66,18 @@ public:
     );
 
     /**
+     * @brief Records that these vendors have been offered to the user, keyed by source id.
+     *
+     * Only ever adds, and saves the manifest when anything was added. A vendor a source offers
+     * and the user does not install stays new for good, so what has been announced is remembered
+     * instead of being announced again on every check.
+     */
+    void acknowledge_vendors(
+        const std::map<std::string, std::vector<std::string>>& vendors_by_repo_id,
+        PresetUpdaterProcessStatus* process_status
+    );
+
+    /**
      * @brief Creates new local repository, unzips it to its newly created directory.
      * Unzipped data lives in datadir until removal of local repo.
      * Other repositories sharing the id of the added one are unselected, because only one
@@ -118,7 +130,6 @@ private:
     void clear_online_repos();
     
     boost::filesystem::path get_stored_manifest_path() const;
-    boost::filesystem::path m_unq_tmp_path;
     PrivateRepositoryVector m_all_repositories;
     
     static std::string get_next_uuid();

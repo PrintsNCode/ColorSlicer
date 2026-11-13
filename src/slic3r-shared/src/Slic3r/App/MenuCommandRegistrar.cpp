@@ -22,6 +22,7 @@
 #include "Slic3r/App/Lua/ProjectApi.hpp"
 #include "Slic3r/App/Platform/IFileExplorerHandler.hpp"
 #include "Slic3r/App/ProjectSaver.hpp"
+#include "Slic3r/App/Browser/BrowserLogicPluginMarketplace.hpp"
 
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 #include "Slic3r/Biz/Scene/SceneInteractor.hpp"
@@ -456,6 +457,7 @@ void MenuCommandRegistrar::register_object_menu_commands()
             }
         )
         .append_item_from_command(MenuItemName::DeleteSelectedObject, CommandName::DeleteSelected)
+        .append_item_from_command(MenuItemName::RenameObject, CommandName::RenameSelected)
         .append_separator()
         .append_item(
             MenuItemName::SetNumberOfInstances,
@@ -472,9 +474,9 @@ void MenuCommandRegistrar::register_object_menu_commands()
                     init_cnt = object->instances.size();
                 }
 
-                m_render_module.get_user_number_and_process(
-                    " ",
-                    Biz::_u8L("Enter the number of copies:"),
+                m_navigator.input_number(
+                    Biz::_u8L("Enter the number of copies"),
+                    std::string{},
                     Biz::_u8L("Copies of the selected object"),
                     init_cnt,
                     1,
@@ -495,7 +497,8 @@ void MenuCommandRegistrar::register_object_menu_commands()
                             target_bed,
                             UndoSnapshotType::SetNumberOfInstances
                         );
-                    }
+                    },
+                    [] {}
                 );
             },
             UIItemCommandExtraOpts{
@@ -1068,6 +1071,7 @@ void MenuCommandRegistrar::register_volume_menu_commands()
 
     builder.push_path_level(MenuItemName::VolumeContextMenu)
         .append_item_from_command(MenuItemName::DeleteSelectedVolume, CommandName::DeleteSelected)
+        .append_item_from_command(MenuItemName::RenameVolume, CommandName::RenameSelected)
         .append_item_from_command(MenuItemName::CopyVolume, CommandName::CopyModelItems)
         .append_separator()
         .append_item_from_command(MenuItemName::ExportVolume, CommandName::ExportAsStl)
@@ -1142,14 +1146,14 @@ void MenuCommandRegistrar::load_project()
         [this](bool success, const std::vector<boost::filesystem::path>& file_paths)
     {
         if (success) {
-            m_project_interactor.load_project(file_paths.front());
+            m_project_interactor.file_opening_interactor().open({file_paths.front()});
         }
     };
 
     auto& dlg_manager = AppServices::instance().dialog_manager();
     dlg_manager.show_file_dialog(
         FileDialogType::Open,
-        _u8L("Open Project"),
+        _u8L("Open project"),
         this->default_dialog_folder(),
         "",
         Wildcards::generate_wildcards(Wildcards::TypeFlag::Project3mf),
@@ -1169,14 +1173,14 @@ void MenuCommandRegistrar::install_plugin(Lua::PluginSystem& plugin_system)
             Biz::Platform::PlatformServices::instance()
                 .main_thread_dispatcher()
                 .dispatch_on_main_thread([&plugin_system, file_path = file_paths.front().string()]
-                                         { plugin_system.install(file_path); });
+                                         { plugin_system.install_file(file_path); });
         }
     };
 
     auto& dlg_manager = AppServices::instance().dialog_manager();
     dlg_manager.show_file_dialog(
         FileDialogType::Open,
-        _u8L("Install Plugin"),
+        _u8L("Install plugin"),
         m_project_interactor.project_dir(
             m_project_interactor.selected_project_id(),
             AppServices::instance().app_config().get<std::string>("last_used_directory")
@@ -1194,7 +1198,7 @@ void MenuCommandRegistrar::load_object(Wildcards::TypeFlag specific_type)
         [this](bool success, const std::vector<boost::filesystem::path>& file_paths)
     {
         if (success) {
-            m_project_interactor.load_models_to_project(file_paths);
+            m_project_interactor.file_opening_interactor().open(file_paths, {.as_geometry = true});
             if (m_render_module.has_command(CommandName::SvgGizmo)
                 && m_render_module.command(CommandName::SvgGizmo).enabled())
             {
@@ -1208,7 +1212,7 @@ void MenuCommandRegistrar::load_object(Wildcards::TypeFlag specific_type)
     auto& dlg_manager = App::AppServices::instance().dialog_manager();
     dlg_manager.show_file_dialog(
         FileDialogType::OpenMultiple,
-        _u8L("Import File"),
+        _u8L("Import file"),
         this->default_dialog_folder(),
         "",
         specific_type == Wildcards::TypeFlag::None ? Wildcards::generate_wildcards(
@@ -1216,6 +1220,28 @@ void MenuCommandRegistrar::load_object(Wildcards::TypeFlag specific_type)
                                                          Wildcards::TypeFlag::AllImportFiles
                                                      ) :
                                                      Wildcards::generate_wildcards(specific_type),
+        callback
+    );
+}
+
+void MenuCommandRegistrar::load_archive()
+{
+    IDialogManager::FileCallback callback =
+        [this](bool success, const std::vector<boost::filesystem::path>& file_paths)
+    {
+        if (success) {
+            m_project_interactor.file_opening_interactor().open(file_paths);
+            m_navigator.navigate_to_module_type(App::Render::ModuleType::Plater);
+        }
+    };
+
+    auto& dlg_manager = App::AppServices::instance().dialog_manager();
+    dlg_manager.show_file_dialog(
+        FileDialogType::OpenMultiple,
+        _u8L("Import ZIP archive"),
+        this->default_dialog_folder(),
+        "",
+        Wildcards::generate_wildcards(Wildcards::TypeFlag::Zip),
         callback
     );
 }
@@ -1308,7 +1334,7 @@ MenuCommandRegistrar::load_volume(Domain::ModelVolumeType type, Wildcards::TypeF
     auto& dlg_manager = AppServices::instance().dialog_manager();
     dlg_manager.show_file_dialog(
         FileDialogType::OpenMultiple,
-        _u8L("Import File"),
+        _u8L("Import file"),
         this->default_dialog_folder(),
         "",
         specific_type == Wildcards::TypeFlag::None ? Wildcards::generate_wildcards(
@@ -1524,6 +1550,7 @@ void MenuCommandRegistrar::register_main_menu_edit_commands()
                         dlg_manager.show_warning_dialog(
                             fmt::vformat(
                                 _u8L(
+                                    // TRN {} is the name of the part
                                     "Part {} could not be deleted from the object,\n"
                                     "as removing the last solid part is not permitted."
                                 ),
@@ -2114,6 +2141,23 @@ void MenuCommandRegistrar::register_file_menu_import_commands()
                     }
                 }
             )
+        )
+        // File -> Import -> Import ZIP archive
+        .register_menu_item(
+            {MenuItemName::FileMenu, MenuItemName::Import, MenuItemName::ImportZip},
+            std::make_unique<UIItemCommand>(
+                CommandName::ImportZip,
+                [this]() { load_archive(); },
+                UIItemCommandExtraOpts{
+                    .enabled = [&]()
+                    {
+                        auto plater_render_module{
+                                dynamic_cast<Plater::PlaterRenderModule*>(&m_render_module)
+                            };
+                        return plater_render_module != nullptr;
+                    }
+                }
+            )
         );
 }
 
@@ -2274,9 +2318,28 @@ void MenuCommandRegistrar::update_main_menu_plugin_commands(Lua::PluginSystem& p
 
 void MenuCommandRegistrar::register_main_menu_plugin_commands(Lua::PluginSystem& plugin_system)
 {
-    bool any_plugin = false;
-    for (auto& plugin : plugin_system.plugins() | std::views::values) {
-        any_plugin = true;
+    // sort plugins by its menu path
+    std::vector<std::tuple<std::string, std::vector<std::string>>> entries;
+    std::ranges::transform(
+        plugin_system.plugins()
+            | std::views::values
+            | std::views::filter(
+                [](const auto& plugin) { return plugin.meta().type != Lua::PluginType::PrintMode; }
+            ),
+        std::back_inserter(entries),
+        [](const auto& p) -> std::tuple<std::string, std::vector<std::string>>
+        { return std::make_tuple(p.meta().id, p.meta().menu); }
+    );
+    std::ranges::sort(entries, {}, [](const auto& p) { return std::get<1>(p); });
+    auto plugin_range =
+        entries
+        | std::views::transform(
+            [&plugin_system](const auto& p) -> const Lua::Plugin&
+            { return plugin_system.plugins().at(std::get<0>(p)); }
+        );
+
+    // register menu items of plugin entries
+    for (auto& plugin : plugin_range) {
         std::vector<UniversalMenuItemName> path;
         if (plugin.meta().menu.empty()) {
             path = {
@@ -2305,9 +2368,35 @@ void MenuCommandRegistrar::register_main_menu_plugin_commands(Lua::PluginSystem&
             )
         );
     }
-    if (any_plugin) {
+
+    // register other plugin related menu items
+    if (!entries.empty()) {
         m_menu_manager.register_menu_separator_item({MenuItemName::Plugins});
     }
+    m_menu_manager.register_menu_item(
+        {MenuItemName::Plugins, MenuItemName::PluginMarketplace},
+        std::make_unique<UIItemCommand>(
+            CommandName::PluginMarketplace,
+            [&]
+            {
+                Biz::Platform::PlatformServices::instance()
+                    .main_thread_dispatcher()
+                    .dispatch_on_main_thread(
+                        [&]
+                        {
+                            AppServices::instance().dialog_manager().show_webview_dialog(
+                                std::make_unique<Browser::BrowserLogicPluginMarketplace>(
+                                    m_project_interactor,
+                                    plugin_system
+                                ),
+                                &m_project_interactor
+                            );
+                        }
+                    );
+            }
+        )
+    );
+    m_menu_manager.register_menu_separator_item({MenuItemName::Plugins});
     m_menu_manager.register_menu_item(
         {MenuItemName::Plugins, MenuItemName::PluginRescan},
         std::make_unique<UIItemCommand>(

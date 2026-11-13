@@ -16,14 +16,14 @@ namespace {
 constexpr const char* PROJECT_SETTINGS_FILE = "Metadata/project_settings.config";
 constexpr const char* MODEL_SETTINGS_FILE   = "Metadata/model_settings.config";
 
-std::optional<std::string> read_file(mz_zip_archive& archive, const char* name)
+std::optional<std::string> read_file(Algorithms::ZipArchive& archive, const char* name)
 {
-    const int index = mz_zip_reader_locate_file(&archive, name, nullptr, 0);
+    const int index = archive.locate_file(name);
     if (index < 0)
         return std::nullopt;
 
     mz_zip_archive_file_stat stat;
-    if (!mz_zip_reader_file_stat(&archive, static_cast<mz_uint>(index), &stat))
+    if (!archive.stat_file(index, stat))
         return std::nullopt;
 
     // Those are small text files. Refuse anything absurd instead of allocating it.
@@ -32,7 +32,7 @@ std::optional<std::string> read_file(mz_zip_archive& archive, const char* name)
         return std::nullopt;
 
     std::string data(static_cast<size_t>(stat.m_uncomp_size), '\0');
-    if (!mz_zip_reader_extract_to_mem(&archive, static_cast<mz_uint>(index), data.data(), data.size(), 0))
+    if (!archive.extract_entry_to(static_cast<mz_uint>(index), data.data(), data.size()))
         return std::nullopt;
     return data;
 }
@@ -141,7 +141,7 @@ void parse_model_settings(const std::string& model_settings_xml, BambuColors& ou
     XML_ParserFree(parser);
 }
 
-BambuColors read_bambu_colors(mz_zip_archive& archive)
+BambuColors read_bambu_colors(Algorithms::ZipArchive& archive)
 {
     BambuColors result;
 

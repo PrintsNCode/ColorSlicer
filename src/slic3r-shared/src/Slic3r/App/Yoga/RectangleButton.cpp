@@ -70,6 +70,11 @@ const ImColor& RectangleButton::background_color_checked() const
     return m_background_color_checked;
 }
 
+const ImColor& RectangleButton::background_color_checked_hover() const
+{
+    return m_background_color_checked_hover;
+}
+
 void RectangleButton::set_background_color_checked(Platform::Color color)
 {
     m_background_color_checked       = m_theme->color_imgui(color, Platform::ColorGroup::Active);
@@ -181,6 +186,16 @@ void RectangleButton::set_content_direction(YGDirection direction)
     m_background->set_direction(direction);
 }
 
+bool RectangleButton::content_apply_window_alpha() const
+{
+    return m_background->apply_window_alpha();
+}
+
+void RectangleButton::set_content_apply_window_alpha(bool apply_window_alpha)
+{
+    m_background->set_apply_window_alpha(apply_window_alpha);
+}
+
 float RectangleButton::background_border_width() const
 {
     return m_background->border_width();
@@ -189,6 +204,11 @@ float RectangleButton::background_border_width() const
 void RectangleButton::set_background_border_width(float width)
 {
     m_background->set_border_width(width);
+}
+
+void RectangleButton::set_background_border_dash(float dash_length, float gap_length)
+{
+    m_background->set_border_dash(dash_length, gap_length);
 }
 
 void RectangleButton::set_content_justify_content(YGJustify justify)

@@ -19,11 +19,23 @@
 #include "boost/system/error_code.hpp"
 #include "boost/nowide/fstream.hpp"
 
+#include <algorithm>
+
 using namespace Slic3r::Biz;
 
 namespace Slic3r::App {
 
     void appconfig_config_init_fn(Domain::ConfigDefinitions& defs);
+
+// The default favorites of SLA printers. Configs saved before they were added get them once, see
+// AppConfig::handle_legacy_config().
+static const std::vector<std::string> sla_favorite_params{
+    "supports_enable",
+    "support_tree_type",
+    "support_points_density_relative",
+    "pad_enable",
+    "hollowing_enable"
+};
 
 AppSettings::AppSettings(const Domain::ConfigDefinitions& defs_appconfig) : ConfigBox(defs_appconfig, Domain::AppConfigLocation{}) {}
 
@@ -105,6 +117,22 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
         }
     );
 
+    def               = defs.add("transparent_window_alpha", typeid(double));
+    def->location     = Domain::AppConfigLocation{};
+    def->label        = L("Sidebars transparency");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_General;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_General_Application;
+    def->gui_type     = Domain::ConfigItemDef::GUIType::f_enum_open;
+    def->tooltip      = L(
+        "Sidebar windows transparency. Select from the predefined values or input the needed value.\n"
+             "Allowed alpha range is [0.5; 1.0]."
+    );
+    def->min = 0.5;
+    def->max = 1.;
+    def->choices =
+        {{1., L("Solid")}, {0.85, L("Subtle")}, {0.7, L("Balanced")}, {0.55, L("Glass")}};
+    def->init_fn = Domain::init_with(1.);
+
     def               = defs.add("camera_projection_type", typeid(Domain::EnumWrapper));
     def->location     = Domain::AppConfigLocation{};
     def->label        = L("Camera projection");
@@ -128,6 +156,150 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->category = Domain::ConfigItemDef::Category::AppConfig_General;
     def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_General_Application;
     def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def           = defs.add("use_free_camera", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->gui_type = GUIType::checkbox;
+    def->label    = L("Use free camera");
+    def->tooltip  = L(
+        "If enabled, the mouse rotates the camera freely in all directions (trackball). "
+         "If not enabled, the camera keeps the Z axis pointing up (turntable)."
+    );
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_General;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_General_Application;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_translation_speed", typeid(double));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::textfield;
+    def->label        = L("Translation");
+    def->tooltip      = L("Speed of moving the view with the 3D mouse.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Speed;
+    def->order        = 0;
+    def->min          = 0.1;
+    def->max          = 30.;
+    def->init_fn      = []() { return Domain::ConfigValue(1.); };
+
+    def               = defs.add("mouse_3d_rotation_speed", typeid(double));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::textfield;
+    def->label        = L("Rotation");
+    def->tooltip      = L("Speed of rotating the view with the 3D mouse.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Speed;
+    def->order        = 1;
+    def->min          = 0.1;
+    def->max          = 30.;
+    def->init_fn      = []() { return Domain::ConfigValue(1.); };
+
+    def               = defs.add("mouse_3d_zoom_speed", typeid(double));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::textfield;
+    def->label        = L("Zoom");
+    def->tooltip      = L("Speed of zooming the view with the 3D mouse.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Speed;
+    def->order        = 2;
+    def->min          = 0.1;
+    def->max          = 30.;
+    def->init_fn      = []() { return Domain::ConfigValue(1.); };
+
+    def           = defs.add("mouse_3d_translation_deadzone", typeid(double));
+    def->location = Domain::AppConfigLocation{};
+    def->gui_type = GUIType::textfield;
+    def->label    = L("Translation/Zoom");
+    def->tooltip =
+        L("Motions of the 3D mouse moving or zooming the view below this value are ignored.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Deadzone;
+    def->order        = 0;
+    def->min          = 0.;
+    def->max          = 0.2;
+    def->init_fn      = []() { return Domain::ConfigValue(0.); };
+
+    def           = defs.add("mouse_3d_rotation_deadzone", typeid(double));
+    def->location = Domain::AppConfigLocation{};
+    def->gui_type = GUIType::textfield;
+    def->label    = L("Rotation");
+    def->tooltip  = L("Motions of the 3D mouse rotating the view below this value are ignored.");
+    def->category = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Deadzone;
+    def->order        = 1;
+    def->min          = 0.;
+    def->max          = 0.2;
+    def->init_fn      = []() { return Domain::ConfigValue(0.); };
+
+    def           = defs.add("mouse_3d_swap_yz", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->gui_type = GUIType::checkbox;
+    def->label    = L("Swap Y/Z axes");
+    def->tooltip =
+        L("Swaps the Y and Z axes of the 3D mouse for both moving and rotating the view.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 0;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_x", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert X axis");
+    def->tooltip      = L("Inverts pushing the cap of the 3D mouse left and right.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 1;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_y", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert Y axis");
+    def->tooltip      = L("Inverts pushing the cap of the 3D mouse forward and backward.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 2;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_z", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert Z axis");
+    def->tooltip      = L("Inverts pulling the cap of the 3D mouse up and pushing it down.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 3;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_yaw", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert yaw axis");
+    def->tooltip      = L("Inverts twisting the cap of the 3D mouse.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 4;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_pitch", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert pitch axis");
+    def->tooltip      = L("Inverts tilting the cap of the 3D mouse forward and backward.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 5;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
+
+    def               = defs.add("mouse_3d_invert_roll", typeid(bool));
+    def->location     = Domain::AppConfigLocation{};
+    def->gui_type     = GUIType::checkbox;
+    def->label        = L("Invert roll axis");
+    def->tooltip      = L("Inverts tilting the cap of the 3D mouse left and right.");
+    def->category     = Domain::ConfigItemDef::Category::AppConfig_Mouse3D;
+    def->option_group = Domain::ConfigItemDef::OptionGroup::AppConfig_Mouse3D_Options;
+    def->order        = 6;
+    def->init_fn      = []() { return Domain::ConfigValue(false); };
 
     def               = defs.add("graphics_quality", typeid(Domain::EnumWrapper));
     def->location     = Domain::AppConfigLocation{};
@@ -227,6 +399,11 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->category = Domain::ConfigItemDef::Category::Hidden;
     def->init_fn = []() { return Domain::ConfigValue(std::string()); };
 
+    def = defs.add("last_used_export_destination", typeid(std::string));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Domain::ConfigItemDef::Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(std::string()); };
+
     // TODO: This option needs check after changed field in Preferences.
     def = defs.add("downloads_directory", typeid(std::string));
     def->location = Domain::AppConfigLocation{};
@@ -258,6 +435,62 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->location = Domain::AppConfigLocation{};
     def->category = Category::Hidden;
     def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    // Preview options visibility (Slic3r::App::libvgcode::Settings::options_visibility)
+    def = defs.add("show_travels_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_wipes_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_retractions_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_unretractions_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_seams_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_tool_changes_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_color_changes_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_pause_prints_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_custom_gcodes_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_center_of_gravity_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(false); };
+
+    def = defs.add("show_tool_marker_in_preview", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Category::Hidden;
+    def->init_fn = []() { return Domain::ConfigValue(true); };
 
     def = defs.add("use_default_colors_in_dbl_slider", typeid(bool));
     def->location = Domain::AppConfigLocation{};
@@ -309,17 +542,28 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->category = Domain::ConfigItemDef::Category::Hidden;
     def->init_fn  = []()
     {
-        return Domain::ConfigValue(
-            std::vector<std::string>{
-                "perimeters",
-                "fill_pattern",
-                "fill_density",
-                "brim_type",
-                "support_material",
-                "support_material_style"
-            }
-        );
+        // One list for both technologies, the sidebar shows the ones of the selected printer.
+        std::vector<std::string> favorites{
+            "perimeters",
+            "fill_pattern",
+            "fill_density",
+            "brim_type",
+            "support_material",
+            "support_material_style"
+        };
+        favorites.insert(favorites.end(), sla_favorite_params.begin(), sla_favorite_params.end());
+        return Domain::ConfigValue(std::move(favorites));
     };
+
+    // Whether the SLA defaults were added to favorite_params. A config without it was saved
+    // before they existed.
+    // TEMPORARY: only migrates app configs from 3.0.0-alpha11, so they get the SLA favorites
+    // added in 3.0.0-alpha13. Once configs older than 3.0.0-alpha13 are phased out, remove this
+    // option together with its handling in AppConfig::handle_legacy_config().
+    def           = defs.add("favorite_params_sla_added", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Domain::ConfigItemDef::Category::Hidden;
+    def->init_fn  = []() { return Domain::ConfigValue(false); };
 
     def           = defs.add("printers_only_favorites", typeid(bool));
     def->location = Domain::AppConfigLocation{};
@@ -327,6 +571,11 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->init_fn  = []() { return Domain::ConfigValue(false); };
 
     def           = defs.add("materials_only_favorites", typeid(bool));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Domain::ConfigItemDef::Category::Hidden;
+    def->init_fn  = []() { return Domain::ConfigValue(false); };
+
+    def           = defs.add("matdb_materials_only_favorites", typeid(bool));
     def->location = Domain::AppConfigLocation{};
     def->category = Domain::ConfigItemDef::Category::Hidden;
     def->init_fn  = []() { return Domain::ConfigValue(false); };
@@ -361,6 +610,16 @@ void appconfig_config_init_fn(Domain::ConfigDefinitions& defs)
     def->location = Domain::AppConfigLocation{};
     def->category = Domain::ConfigItemDef::Category::Hidden;
     def->init_fn  = []() { return Domain::ConfigValue{false}; };
+
+    def = defs.add("last_material_selection_dialog_tab", typeid(int));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Domain::ConfigItemDef::Category::Hidden;
+    def->init_fn  = []() { return Domain::ConfigValue{0}; };
+
+    def = defs.add("last_printer_settings_dialog_filter", typeid(int));
+    def->location = Domain::AppConfigLocation{};
+    def->category = Domain::ConfigItemDef::Category::Hidden;
+    def->init_fn  = []() { return Domain::ConfigValue{0}; };
 }
 
 tl::expected<std::unique_ptr<AppConfig>, std::string> AppConfig::load_appconfig(const std::string& filename)
@@ -394,10 +653,25 @@ tl::expected<std::unique_ptr<AppConfig>, std::string> AppConfig::load_appconfig(
 
 void AppConfig::handle_legacy_config(AppConfig& app_config)
 {
-    const boost::optional<Semver> semver{Semver::parse(app_config.get<std::string>("version"))};
-    if (!semver.has_value()) {
-        return;
+    // A stored favorite_params replaces the default, so configs saved before the SLA favorites
+    // existed would never show them. Add them once; when the user unstars them later, they stay
+    // removed. A new config has them already, so nothing is added there.
+    if (!app_config.get<bool>("favorite_params_sla_added")) {
+        auto favorites{app_config.get<std::vector<std::string>>("favorite_params")};
+        for (const std::string& key : sla_favorite_params) {
+            if (std::ranges::find(favorites, key) == favorites.end()) {
+                favorites.push_back(key);
+            }
+        }
+        app_config.set("favorite_params", favorites);
+        app_config.set("favorite_params_sla_added", true);
     }
+
+    const boost::optional<Semver> semver{Semver::parse(app_config.get<std::string>("version"))};
+    if (semver.has_value() && *semver < Semver("3.0.0-alpha13")) {
+        app_config.set("initialized", false);
+    }
+    app_config.set("version", std::string(Slic3r::VERSION));
 }
 
 AppConfig::AppConfig() :

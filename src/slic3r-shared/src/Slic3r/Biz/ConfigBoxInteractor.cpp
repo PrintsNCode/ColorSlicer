@@ -2,12 +2,12 @@
 
 namespace Slic3r::Biz {
 
-ConfigBoxInteractor::ConfigBoxInteractor() :
-    m_config_box_list(std::make_shared<ConfigBoxObservableList>())
-{}
-
-ConfigBoxInteractor::ConfigBoxInteractor(SetAccessor& set_accessor) :
-    ConfigBoxInteractor()
+ConfigBoxInteractor::ConfigBoxInteractor(
+    Scene::SceneInteractor* scene_interctor,
+    Slicing::SlicingInteractor* slicing_interactor,
+    SetAccessor& set_accessor) :
+    m_config_box_list(
+        std::make_shared<ConfigBoxObservableList>(scene_interctor, slicing_interactor))
 {
     set_accessor.set_source(m_config_box_list.get());
 }
@@ -48,6 +48,13 @@ void ConfigBoxInteractor::SetAccessor::set_config_box(
 )
 {
     m_config_box_list.lock()->set_config_box(config_box, original_config_box);
+}
+
+void ConfigBoxInteractor::SetAccessor::set_original_config_box(
+    const Domain::ConfigBox* original_config_box
+)
+{
+    m_config_box_list.lock()->set_original_config_box(original_config_box);
 }
 
 void ConfigBoxInteractor::SetAccessor::set_from_original_value(const std::string& key)

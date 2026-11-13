@@ -34,37 +34,25 @@ enum class PrintHostAfterUploadAction
 
 std::vector<PrintHostAfterUploadAction> get_post_upload_actions(Domain::PrintHostType type);
 
-enum class PrintHostExportFormat
-{
-    Undefined,
-    GCode,
-    BGCode,
-    Sl1,
-    Sl1s,
-};
-
-PrintHostExportFormat get_export_format_from_extension(const std::string& extension);
-
 struct PrintHostJobData
 {
     DataPtrVariant data_ptr;
 
     boost::filesystem::path source_path;
     boost::filesystem::path dest_path;
+    // Name stored inside of the formats that have one (SL1); the stem of dest_path when empty.
+    std::string job_name;
 
     PrintHostAfterUploadAction post_action{PrintHostAfterUploadAction::None};
     std::string storage;
     std::string group;
     std::string request_body_json;
 
-    PrintHostExportFormat result_format;
-
     PrintHostJobData() = delete;
 
-    PrintHostJobData(DataPtrVariant data, const boost::filesystem::path& dest, PrintHostExportFormat result_format) :
+    PrintHostJobData(DataPtrVariant data, const boost::filesystem::path& dest) :
         data_ptr(data),
-        dest_path(dest),
-        result_format(result_format)
+        dest_path(dest)
     {}
 
     PrintHostJobData(PrintHostJobData&& other) noexcept = default;

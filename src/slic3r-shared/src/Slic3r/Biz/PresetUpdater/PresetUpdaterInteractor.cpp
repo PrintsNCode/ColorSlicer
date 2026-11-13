@@ -9,12 +9,16 @@
 #include "Slic3r/Log.hpp"
 
 #include <algorithm>
+#include <chrono>
+#include <map>
 #include <set>
 #include <vector>
 
 namespace Slic3r::Biz::PresetUpdater {
 
 namespace {
+
+constexpr std::chrono::seconds k_access_token_wait{5};
 
 Platform::JobManager::JobManager* job_manager_or_null()
 {
@@ -200,18 +204,23 @@ bool PresetUpdaterInteractor::is_job_pending(JobId job_id) const
     });
 }
 
-std::function<void(const std::string&, int, unsigned)>
+std::function<void(const PresetUpdaterProgress&)>
 PresetUpdaterInteractor::make_status_callback(
     JobId job_id, Platform::JobManager::ProgressTracker progress_tracker, VerboseStyle verbose
 )
 {
-    return [this, job_id, progress_tracker, verbose](
-               const std::string& target, int attempt, unsigned delay
-           ) mutable
+    return [this, job_id, progress_tracker, verbose](const PresetUpdaterProgress& progress) mutable
     {
-        progress_tracker.set_progress_detail(Domain::ProgressDetail{attempt, target});
-        dispatch_status(job_id, target, attempt, delay, verbose);
+        progress_tracker.set_progress_detail(Domain::ProgressDetail{progress.attempt, progress});
+        dispatch_status(job_id, progress, verbose);
     };
+}
+
+std::function<std::string(JThread::StopToken)>
+PresetUpdaterInteractor::make_access_token_provider() const
+{
+    return [this](JThread::StopToken stop_token)
+    { return m_user_account_interactor.wait_for_access_token(k_access_token_wait, stop_token); };
 }
 
 JobId PresetUpdaterInteractor::check_forced_reconfigurations()
@@ -220,7 +229,7 @@ JobId PresetUpdaterInteractor::check_forced_reconfigurations()
     // Forced reconfigurations must be checked on startup
 
     return enqueue(
-        [this, access_token = m_user_account_interactor.access_token()](
+        [this](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -230,7 +239,7 @@ JobId PresetUpdaterInteractor::check_forced_reconfigurations()
                 make_status_callback(job_id, progress_tracker, VerboseStyle::NoProgress),
                 PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
             PresetUpdaterRepositoryDatabase repo_database(&process_status);
             if (process_status.has_error()) {
                 dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
@@ -259,16 +268,15 @@ JobId PresetUpdaterInteractor::check_forced_reconfigurations()
     );
 }
 
-JobId PresetUpdaterInteractor::build_update_sync_and_reconfiguration_check(
+JobId PresetUpdaterInteractor::sync_indices_and_reconfiguration_check(
     bool online_allowed,
     VerboseStyle verbose,
-    bool ignore_hash /*= false*/,
     SourceListSync source_list /*= SourceListSync::Fetch*/,
     const std::set<std::string>& required_repo_ids /*= {}*/
 )
 {
     return enqueue(
-        [this, online_allowed, verbose, ignore_hash, source_list, required_repo_ids, access_token = m_user_account_interactor.access_token()](
+        [this, online_allowed, verbose, source_list, required_repo_ids](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -276,10 +284,9 @@ JobId PresetUpdaterInteractor::build_update_sync_and_reconfiguration_check(
             PresetUpdaterProcessStatus process_status(
                 stop_token,
                 make_status_callback(job_id, progress_tracker, verbose),
-                PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES,
-                ignore_hash
+                PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
             PresetUpdaterRepositoryDatabase repo_database(&process_status);
             PresetUpdaterRepositorySync archive_sync;
 
@@ -303,7 +310,7 @@ JobId PresetUpdaterInteractor::build_update_sync_and_reconfiguration_check(
 
             const SharedRepositoryVector repos =
                 repo_database.get_selected_and_required_repositories(required_repo_ids);
-            archive_sync.sync(repos, online_allowed, &process_status);
+            archive_sync.sync_indices(repos, online_allowed, &process_status);
             if (process_status.has_error()) {
                 dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
                 return JobState::Failed;
@@ -311,6 +318,13 @@ JobId PresetUpdaterInteractor::build_update_sync_and_reconfiguration_check(
             if (stop_token.stop_requested()) {
                 return JobState::Canceled;
             }
+
+            std::set<std::string> known_repo_ids;
+            for (const SharedPresetUpdaterRepositoryInfo& info :
+                 repo_database.get_all_repositories()) {
+                known_repo_ids.insert(info.descriptor.id);
+            }
+            archive_sync.remove_unknown_sources(known_repo_ids, &process_status);
 
             PresetUpdaterReconfigurationList reconfigurations =
                 PresetUpdater::check_reconfigurations(repos, &process_status);
@@ -332,14 +346,16 @@ JobId PresetUpdaterInteractor::build_update_sync_and_reconfiguration_check(
 
 JobId PresetUpdaterInteractor::perform_reconfigurations(
     const PresetUpdaterReconfigurationList& reconfigurations,
-    ReconfigurationType types_to_perform /*= ReconfigurationType::All*/
+    bool online_allowed,
+    ReconfigurationType types_to_perform /*= ReconfigurationType::All*/,
+    bool ignore_hash /*= false*/
 )
 {
     // Does not care about App config value - allways runs
     // Possible forced reconfigurations must be able to be performed
 
     return enqueue(
-        [this, reconfigurations, types_to_perform, access_token = m_user_account_interactor.access_token()](
+        [this, reconfigurations, online_allowed, types_to_perform, ignore_hash](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -349,15 +365,32 @@ JobId PresetUpdaterInteractor::perform_reconfigurations(
                 make_status_callback(
                     job_id, progress_tracker, VerboseStyle::ProgressNotification
                 ),
-                PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
+                PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES,
+                ignore_hash
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
+            PresetUpdaterRepositoryDatabase repo_database(&process_status);
+            if (process_status.has_error()) {
+                dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
+                return JobState::Failed;
+            }
+
+            // Every source the reconfigurations name, selected or not: presets installed from a
+            // source that has since been switched off still have to be repairable.
+            const SharedRepositoryVector repos =
+                repo_database.get_selected_and_required_repositories(reconfigurations.repo_ids());
+
             PresetUpdater::perform_reconfigurations(
-                reconfigurations, types_to_perform, &process_status
+                reconfigurations, types_to_perform, repos, online_allowed, &process_status
             );
             if (process_status.has_error()) {
                 dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
                 return JobState::Failed;
+            }
+            // Only shutdown() stops a running reconfiguration, so skipping the reload and the
+            // row updates for vendors already installed is intended: the app is closing.
+            if (stop_token.stop_requested()) {
+                return JobState::Canceled;
             }
             dispatch_reconfigurations_performed(job_id, process_status.warnings());
             return JobState::Succeeded;
@@ -370,7 +403,7 @@ JobId PresetUpdaterInteractor::apply_repository_selection(
 )
 {
     return enqueue(
-        [this, repos, access_token = m_user_account_interactor.access_token()](
+        [this, repos](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -382,7 +415,7 @@ JobId PresetUpdaterInteractor::apply_repository_selection(
                 ),
                 PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
             PresetUpdaterRepositoryDatabase repo_database(&process_status);
 
             if (process_status.has_error()) {
@@ -398,6 +431,38 @@ JobId PresetUpdaterInteractor::apply_repository_selection(
             dispatch_repository_selection_performed(
                 job_id, repo_database.get_all_repositories(), process_status.warnings()
             );
+            return JobState::Succeeded;
+        }
+    );
+}
+
+JobId PresetUpdaterInteractor::acknowledge_new_vendors(
+    const std::map<std::string, std::vector<std::string>>& vendors_by_repo_id
+)
+{
+    return enqueue(
+        [this, vendors_by_repo_id](
+            JThread::StopToken stop_token,
+            Platform::JobManager::ProgressTracker progress_tracker,
+            JobId job_id
+        ) {
+            PresetUpdaterProcessStatus process_status(
+                stop_token,
+                make_status_callback(job_id, progress_tracker, VerboseStyle::NoProgress),
+                PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
+            );
+            PresetUpdaterRepositoryDatabase repo_database(&process_status);
+
+            if (process_status.has_error()) {
+                dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
+                return JobState::Failed;
+            }
+
+            repo_database.acknowledge_vendors(vendors_by_repo_id, &process_status);
+            if (process_status.has_error()) {
+                dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
+                return JobState::Failed;
+            }
             return JobState::Succeeded;
         }
     );
@@ -476,7 +541,7 @@ JobId PresetUpdaterInteractor::remove_local_repository(const std::string& uuid)
 JobId PresetUpdaterInteractor::list_repositories(bool online_allowed, bool force_sync /*= true*/)
 {
     return enqueue(
-        [this, force_sync = force_sync && online_allowed, access_token = m_user_account_interactor.access_token()](
+        [this, force_sync = force_sync && online_allowed](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -488,7 +553,7 @@ JobId PresetUpdaterInteractor::list_repositories(bool online_allowed, bool force
                 ),
                 PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
             PresetUpdaterRepositoryDatabase repo_database(&process_status);
 
             if (process_status.has_error()) {
@@ -515,7 +580,7 @@ JobId PresetUpdaterInteractor::list_repositories(bool online_allowed, bool force
 JobId PresetUpdaterInteractor::cleanup_update_sync()
 {
     return enqueue(
-        [this, access_token = m_user_account_interactor.access_token()](
+        [this](
             JThread::StopToken stop_token,
             Platform::JobManager::ProgressTracker progress_tracker,
             JobId job_id
@@ -525,7 +590,7 @@ JobId PresetUpdaterInteractor::cleanup_update_sync()
                 make_status_callback(job_id, progress_tracker, VerboseStyle::NoProgress),
                 PresetUpdaterProcessStatus::PresetUpdaterRetryPolicy::PURP_5_TRIES
             );
-            process_status.set_access_token(access_token);
+            process_status.set_access_token_provider(make_access_token_provider());
             PresetUpdater::cleanup_update_sync(&process_status);
             if (process_status.has_error()) {
                 dispatch_error(job_id, process_status.get_error(), process_status.get_error_reason());
@@ -567,11 +632,13 @@ void PresetUpdaterInteractor::dispatch_error(
     });
 }
 
-void PresetUpdaterInteractor::dispatch_status(JobId job_id, const std::string& target, int attempt, unsigned delay, VerboseStyle verbose)
+void PresetUpdaterInteractor::dispatch_status(
+    JobId job_id, const PresetUpdaterProgress& progress, VerboseStyle verbose
+)
 {
-    m_dispatcher.dispatch_on_main_thread([this, job_id, target, attempt, delay, verbose]() {
-        this->invoke_listeners<IPresetUpdaterResultListener>([job_id, target, attempt, delay, verbose](auto* listener) {
-            listener->on_preset_updater_status(job_id, target, attempt, delay, verbose);
+    m_dispatcher.dispatch_on_main_thread([this, job_id, progress, verbose]() {
+        this->invoke_listeners<IPresetUpdaterResultListener>([job_id, progress, verbose](auto* listener) {
+            listener->on_preset_updater_status(job_id, progress, verbose);
         });
     });
 }

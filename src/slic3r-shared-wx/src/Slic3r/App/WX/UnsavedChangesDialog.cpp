@@ -95,9 +95,10 @@ UnsavedChangesDialog::UnsavedChangesDialog(
 
 void UnsavedChangesDialog::create_tree()
 {
-    int em = w_config()->em_unit();
+    int em = w_config()->em_unit(this);
     m_tree = new DiffViewCtrl(this, wxSize(em * (m_config_new ? 90 : 65), em * 40));
     m_tree->SetFont(this->GetFont());
+    m_tree->set_em_unit(em);
 
 #ifdef __linux__
     const int toggle_column_width = 10;
@@ -107,18 +108,19 @@ void UnsavedChangesDialog::create_tree()
 
     m_tree->AppendToggleColumn_(wxString(L"\u2714"), DiffDVCModel::colToggle, toggle_column_width);
     m_tree->AppendBmpTextColumn(wxEmptyString, DiffDVCModel::colIconText, 35);
-    m_tree->AppendBmpTextColumn(_L("Original Value"), DiffDVCModel::colOldValue, 15);
-    m_tree->AppendBmpTextColumn(_L("Modified Value"), DiffDVCModel::colModValue, 15);
+    m_tree->AppendBmpTextColumn(_L("Original value"), DiffDVCModel::colOldValue, 15);
+    m_tree->AppendBmpTextColumn(_L("Modified value"), DiffDVCModel::colModValue, 15);
     if (m_config_new)
-        m_tree->AppendBmpTextColumn(_L("New Value"), DiffDVCModel::colNewValue, 15);
+        m_tree->AppendBmpTextColumn(_L("New value"), DiffDVCModel::colNewValue, 15);
 }
 
 void UnsavedChangesDialog::add_buttons(wxBoxSizer* buttons)
 {
     // Add Buttons
     wxFont btn_font = this->GetFont().Scaled(1.4f);
+    int em = w_config()->em_unit(this);
 
-    auto add_btn = [this, buttons, btn_font](
+    auto add_btn = [this, em, buttons, btn_font](
                        wxButton** btn,
                        const std::string& icon_name,
                        Biz::Preset::PresetDiffOperation close_act,
@@ -132,11 +134,11 @@ void UnsavedChangesDialog::add_buttons(wxBoxSizer* buttons)
             wxID_ANY,
             label,
             wxDefaultPosition,
-            wxSize(wxDefaultCoord, 30),
+            wxSize(wxDefaultCoord, 3 * em),
             wxBORDER_SIMPLE
         );
         (*btn)->SetBitmap(*get_bmp_bundle(icon_name, 20, 20));
-        (*btn)->SetBitmapMargins(int(0.5 * w_config()->em_unit(this)), 0);
+        (*btn)->SetBitmapMargins(int(0.5 * em), 0);
 
         buttons->Add(*btn, 1, wxLEFT, buttons->IsEmpty() ? 0 : 5);
         (*btn)->SetFont(btn_font);
@@ -308,6 +310,7 @@ void UnsavedChangesDialog::show_current_diffs()
 
     if (diffs_cnt > 1) {
         const std::string suffix =
+            // TRN 1st {} is the number of the current step, 2nd {} is the total count of steps
             fmt::vformat(_u8L("Step {} from {}"), fmt::make_format_args(step, diffs_cnt));
         info += from_u8("\n\n" + suffix);
     }
@@ -490,7 +493,7 @@ void UnsavedChangesDialog::update_tree(
 
         preset_name = fmt::format(
             "{} {} \"{}\"",
-            _u8L("Tool Print"),
+            _u8L("Tool print"),
             tool_id + 1,
             name(m_preset_names.tools[tool_id])
         );
@@ -515,7 +518,7 @@ void UnsavedChangesDialog::update_tree(
 
         preset_name = fmt::format(
             "{} {} \"{}\"",
-            _u8L("Tool Filament"),
+            _u8L("Tool filament"),
             tool_id + 1,
             name(m_preset_names.materials[tool_id])
         );

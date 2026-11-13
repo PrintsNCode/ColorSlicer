@@ -11,6 +11,7 @@ class PresetUpdaterCLI : public Biz::PresetUpdater::IPresetUpdaterResultListener
 {
 public:
     PresetUpdaterCLI(Biz::PresetUpdater::PresetUpdaterInteractor& preset_updater_interactor);
+    ~PresetUpdaterCLI();
 
     void start(const ActionParams& action, const std::string data);
 
@@ -38,7 +39,11 @@ public:
         const std::vector<Biz::PresetUpdater::PresetUpdaterWarning>& warnings
     ) override;
 
-    void on_preset_updater_status(Biz::PresetUpdater::JobId job_id, const std::string& target, int attempt, unsigned delay, Biz::PresetUpdater::VerboseStyle verbose) override;
+    void on_preset_updater_status(
+        Biz::PresetUpdater::JobId job_id,
+        const Biz::PresetUpdater::PresetUpdaterProgress& progress,
+        Biz::PresetUpdater::VerboseStyle verbose
+    ) override;
 
     void on_preset_updater_repository_info_vector(
         Biz::PresetUpdater::JobId job_id,

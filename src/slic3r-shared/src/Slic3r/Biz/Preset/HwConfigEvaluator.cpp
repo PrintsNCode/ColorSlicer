@@ -2,6 +2,8 @@
 #include "Slic3r/Biz/Preset/ValueMapBuilder.hpp"
 #include "Slic3r/Uuid.hpp"
 
+#include <ranges>
+
 namespace Slic3r::Biz::Preset {
 
 HwToolConfigIterator HwConfigEvaluator::iterate_tools(
@@ -104,7 +106,6 @@ Domain::Preset::HwPrinterConfig HwConfigEvaluator::create_printer_config(
     for (const auto& feeder_templ : templ.feeders) {
         const auto* feeder_def = vendor_data.find_feeder_config_def_by_id(feeder_templ.id);
         ASSERT(feeder_def != nullptr, feeder_templ.id);
-        ASSERT(feeder_def->technology == printer_def->technology, feeder_templ.id);
         auto feeder_features = build_features(vendor_data.info.features.feeder);
         Domain::Preset::override_features(feeder_features, feeder_def->features);
         Domain::Preset::override_features(feeder_features, feeder_templ.features);
@@ -193,6 +194,23 @@ Domain::Preset::HwPrinterConfig from_def(
     return config;
 }
 
+Domain::Preset::HwFeederConfig from_def(
+    const Domain::Preset::VendorData& vendor_data,
+    const Domain::Preset::HwFeederConfigDef& feeder_def
+)
+{
+    auto feeder_features = build_features(vendor_data.info.features.feeder);
+    Domain::Preset::override_features(feeder_features, feeder_def.features);
+    Domain::Preset::HwFeederConfig feeder_config{
+        .id         = feeder_def.id,
+        .type       = feeder_def.type,
+        .model      = feeder_def.model,
+        .slot_count = feeder_def.slot_count,
+        .features   = feeder_features,
+    };
+    return feeder_config;
+}
+
 Domain::Preset::HwPrinterConfig
 new_scratch_config(Domain::PrinterTechnology technology, const std::string& name, size_t tool_count)
 {
@@ -215,5 +233,46 @@ new_scratch_config(Domain::PrinterTechnology technology, const std::string& name
     }
 
     return config;
+}
+namespace {
+bool update_deprecated_id(const Domain::Preset::IdMap& id_map, std::string& id)
+{
+    if (auto it = id_map.find(id); it != id_map.end()) {
+        id = it->second;
+        return true;
+    }
+    return false;
+}
+
+bool update_deprecated_ids(
+    const Domain::Preset::ModelIdMapping& id_mapping,
+    Domain::Preset::HwModel& model
+)
+{
+    bool modified = false;
+    modified = update_deprecated_id(id_mapping.model, model.model) || modified;
+    modified = update_deprecated_id(id_mapping.base_model, model.base_model) || modified;
+    return modified;
+}
+} // namespace
+
+bool update_deprecated_ids(
+    const Domain::Preset::DeprecatedIdMapping& deprecated_ids,
+    Domain::Preset::HwPrinterConfig& config
+)
+{
+    bool modified = false;
+    auto m = [&modified](bool m) { modified = modified || m; };
+
+    m(update_deprecated_ids(deprecated_ids.printer.model, config.model));
+    m(update_deprecated_id(deprecated_ids.printer.id, config.printer_id));
+    for (auto& tool : config.tools) {
+        m(update_deprecated_id(deprecated_ids.tool.id, tool.id));
+    }
+    for (auto& feeder : config.feeders | std::views::values) {
+        m(update_deprecated_ids(deprecated_ids.feeder.model, feeder.model));
+        m(update_deprecated_id(deprecated_ids.feeder.id, feeder.id));
+    }
+    return modified;
 }
 } // namespace Slic3r::Biz::Preset

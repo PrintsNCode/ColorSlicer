@@ -28,6 +28,14 @@ constexpr Unit k_preferred_max_height{700, Unit::Type::FigmaPixel};
 
 constexpr float k_viewport_fraction{0.9f};
 
+/**
+ * @brief Keeps the scrolled content out from under the vertical scrollbar.
+ *
+ * The scroll area reports its content as wide as itself, while the scrollbar takes part of that
+ * width, which would leave a sliver of sideways scroll whenever the scrollbar is up.
+ */
+constexpr Unit k_scrollbar_reserve{16, Unit::Type::FigmaPixel};
+
 constexpr float k_top_row_height{40};
 
 constexpr const char* k_preset_repo_url{"https://help.prusa3d.com/slicer-profiles/3"};
@@ -136,8 +144,8 @@ void PresetUpdaterDialog::build_content()
         m_forced_banner->emplace_back<Text>(forced_heading, Render::ImguiFontType::Bold);
     forced_heading_text->set_text_color(m_theme->color_imgui(Platform::Color::Warning));
 
-    // TRN Preset updater dialog. Body of the required updates banner.
     const std::string forced_body = Biz::_u8L(
+        // TRN Preset updater dialog. Body of the required updates banner.
         "The printer presets installed on this computer cannot be used until they are changed. "
         "Only the sources they came from are listed below. Apply the changes to continue, switch a "
         "source off to remove the presets it installed instead, or quit the application."
@@ -152,7 +160,7 @@ void PresetUpdaterDialog::build_content()
     Item* sections = scroll_area->emplace_back<Item>();
     sections->set_orientation(Orientation::Vertical);
     sections->set_gap(16_fpx);
-    sections->set_width_percent(100);
+    sections->set_margin({0, 0, k_scrollbar_reserve, 0});
     sections->set_flex_shrink(0);
 
     // TRN Preset updater dialog. Heading above the sources served over the internet.
@@ -163,8 +171,8 @@ void PresetUpdaterDialog::build_content()
     Text* online_blurb            = sections->emplace_back<Text>(online_text);
     online_blurb->set_wrap_mode(Text::WrapMode::Wrap);
 
-    // TRN Preset updater dialog. Shown under the "Online sources" heading.
     const std::string offline_text = Biz::_u8L(
+        // TRN Preset updater dialog. Shown under the "Online sources" heading.
         "Checking these sources over the internet is turned off in Preferences. Presets are still "
         "installed from the files that come with the application and from local sources."
     );
@@ -382,6 +390,7 @@ void PresetUpdaterDialog::on_preset_updater_changed()
 
     if (forced_state_cleared) {
         close();
+        m_navigator.set_modal_dialog(ModalDialog::None);
     }
 }
 

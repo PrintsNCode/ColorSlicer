@@ -3,6 +3,7 @@
 #include "Slic3r/App/AppServices.hpp"
 #include "Slic3r/App/ColorDropdown.hpp"
 #include "Slic3r/App/ColorMix/BarycentricRatioPicker.hpp"
+#include "Slic3r/App/ColorMix/BlendPresetSortFilter.hpp"
 #include "Slic3r/App/ColorMix/BlendRatioBar.hpp"
 #include "Slic3r/App/ColorMix/BlendRecipeTile.hpp"
 #include "Slic3r/App/ColorMix/ColorMixRecipeRow.hpp"
@@ -10,8 +11,9 @@
 #include "Slic3r/App/ColorMix/ExtruderFilterButton.hpp"
 #include "Slic3r/App/ColorMix/LayerSequenceBar.hpp"
 #include "Slic3r/App/IDialogManager.hpp"
-#include "Slic3r/App/LogicalPrinterSettingsDialog.hpp"
+#include "Slic3r/App/PrinterSettingsDialog.hpp"
 #include "Slic3r/App/Navigator.hpp"
+#include "Slic3r/App/WarningPanel.hpp"
 #include "Slic3r/App/Yoga/ColorPickerButton.hpp"
 #include "Slic3r/App/Yoga/LayoutButton.hpp"
 #include "Slic3r/App/Yoga/RectangleButton.hpp"
@@ -31,6 +33,7 @@
 #include "Slic3r/Log.hpp"
 
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
 #include <algorithm>
 #include <map>
@@ -57,13 +60,15 @@ using Slic3r::Domain::VirtualExtruderComponent;
 using Slic3r::Domain::VirtualExtruders;
 using Slic3r::Domain::Preset::SelectedPresetConfigPack;
 
+using Slic3r::Biz::Algorithms::Color::encode_color;
+using Slic3r::Biz::Algorithms::VirtualExtruder::mixed_filament_types;
+
 using namespace Slic3r::App::Yoga;
 using namespace Slic3r::Biz;
 
 namespace Slic3r::App::ColorMix {
 
 using Slic3r::Biz::Algorithms::VirtualExtruderPresets::BlendPreset;
-using Slic3r::Biz::Algorithms::VirtualExtruderPresets::BlendPresetGroups;
 using Slic3r::Biz::Algorithms::VirtualExtruderPresets::BlendPresets;
 using Slic3r::Biz::Algorithms::VirtualExtruderPresets::PhysicalExtruderSlots;
 
@@ -73,7 +78,7 @@ const constexpr Unit PANEL_GAP{8_fpx};
 const constexpr Unit LEFT_PANEL_WIDTH{330_fpx};
 const constexpr Unit EXTRUDER_DROPDOWN_WIDTH{150_fpx};
 const constexpr Unit PERCENT_FONT_SIZE{1.6_rem};
-constexpr const char* FALLBACK_COLOR = "#808080";
+const std::string FALLBACK_COLOR{"#808080"};
 
 struct ColorMixDialogInput
 {
@@ -104,7 +109,10 @@ ColorMixDialogInput collect_color_mix_dialog_input(ProjectInteractor& project_in
     input.virtual_extruders = config_container.virtual_extruders();
 
     const std::vector<ColorRGB> slot_colors =
-        project_interactor.project_settings_interactor().get_colors(config_container_id);
+        project_interactor.project_settings_interactor().get_colors(
+            project_interactor.selected_project_id(),
+            config_container_id
+        );
     const SelectedPresetConfigPack preset_config_pack(config_container.selected_preset());
 
     input.physical_colors.reserve(input.physical_extruder_count);
@@ -113,7 +121,7 @@ ColorMixDialogInput collect_color_mix_dialog_input(ProjectInteractor& project_in
         input.physical_colors.push_back(
             slot_index < slot_colors.size() ?
                 Algorithms::Color::encode_color(slot_colors[slot_index]) :
-                std::string{}
+                FALLBACK_COLOR
         );
 
         std::string filament_type;
@@ -189,21 +197,76 @@ ColorMixDialogInput collect_color_mix_dialog_input(ProjectInteractor& project_in
     return input;
 }
 
+BlendTileData make_blend_tile_data(
+    const BlendPreset& preset,
+    const PhysicalExtruderSlots& slots,
+    const size_t candidate_index,
+    const bool already_used
+)
+{
+    std::string label;
+    std::string tooltip;
+    for (size_t i = 0; i < preset.extruder_ids_1based.size(); ++i) {
+        if (i > 0) {
+            label += '+';
+            tooltip += " + ";
+        }
+
+        label += std::to_string(preset.extruder_ids_1based.at(i));
+        tooltip += fmt::format(
+            // TRN "Ext" is short for "Extruder". 1st {} is the extruder number, 2nd {} is its
+            // share in the color mix in percent
+            fmt::runtime(_u8L("Ext {} ({} %)")),
+            preset.extruder_ids_1based.at(i),
+            preset.ratios_percent.at(i)
+        );
+    }
+
+    return {
+        preset,
+        parse_hex_color(Biz::Algorithms::VirtualExtruderPresets::preset_color(preset, slots)),
+        Biz::Algorithms::VirtualExtruderPresets::preset_perceptual_color(preset, slots),
+        label,
+        already_used ? _u8L("Already added - click to remove") : _u8L("Click to add: ") + tooltip,
+        candidate_index,
+        already_used
+    };
+}
+
 } // namespace
 
 ColorMixDialog::ColorMixDialog(
     ProjectInteractor& project_interactor,
-    Navigator& navigator,
-    LogicalPrinterSettingsDialog* logical_printer_settings_dialog
+    Navigator& navigator
 ) :
-    Dialog({_u8L("Color Mixing")}, "ColorMixDialog"),
+    Dialog({_u8L("Color mixing")}, "ColorMixDialog"),
     m_colors_changed_listener_scope(project_interactor.project_settings_interactor(), *this),
     m_preset_changed_listener_scope(project_interactor.preset_interactor(), *this),
     m_selected_config_container_changed_listener_scope(project_interactor, *this),
     m_project_interactor(project_interactor),
     m_navigator(navigator),
-    m_logical_printer_settings_dialog(logical_printer_settings_dialog)
+    m_extruder_filters(std::make_shared<ObservableList<ExtruderFilterData>>()),
+
+    m_blend_candidates(std::make_shared<ObservableList<BlendTileData>>()),
+    m_blend_preset_filter(
+        std::make_shared<BlendPresetSortFilter>(
+            [this](const unsigned int extruder_id_1based) -> bool
+            { return this->is_extruder_enabled(extruder_id_1based); }
+        )
+    ),
+    m_two_color_presets(std::make_shared<ObservableListSortFilter<BlendTileData>>()),
+    m_three_color_presets(std::make_shared<ObservableListSortFilter<BlendTileData>>()),
+    m_recipe_rows(std::make_shared<ObservableList<RecipeRowData>>())
 {
+    m_two_color_presets->set_filter_fn(
+        [](const BlendTileData& tile) -> bool
+        { return tile.preset.extruder_ids_1based.size() == 2; }
+    );
+    m_three_color_presets->set_filter_fn(
+        [](const BlendTileData& tile) -> bool
+        { return tile.preset.extruder_ids_1based.size() == 3; }
+    );
+
     this->content_item()->set_width(980_fpx);
     this->content_item()->set_height(660_fpx);
 
@@ -214,7 +277,7 @@ ColorMixDialog::ColorMixDialog(
 
     m_few_extruders_hint = this->content()->emplace_back<Text>(_u8L(
         "Virtual extruders need at least two physical extruders. "
-        "Increase the extruder count in Printer Settings first."
+        "Increase the extruder count in Printer settings first."
     ));
     m_few_extruders_hint->set_wrap_mode(Text::WrapMode::Wrap);
     m_few_extruders_hint->set_margin({16_fpx, 12_fpx, 16_fpx, 0});
@@ -267,44 +330,31 @@ void ColorMixDialog::update_physical_colors()
         return;
     }
 
-    const ColorMixDialogInput input = collect_color_mix_dialog_input(m_project_interactor);
+    ColorMixDialogInput input = collect_color_mix_dialog_input(m_project_interactor);
     if (input.physical_extruder_count != m_physical_extruder_count) {
         this->update_from_project();
         return;
     }
 
-    m_physical_colors.clear();
-    m_physical_colors.reserve(m_physical_extruder_count);
-    for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
-        std::string color =
-            i < input.physical_colors.size() ? input.physical_colors.at(i) : std::string{};
-        if (color.empty()) {
-            color = FALLBACK_COLOR;
-        }
+    m_physical_colors = std::move(input.physical_colors);
+    m_physical_types  = std::move(input.physical_types);
 
-        m_physical_colors.push_back(std::move(color));
-    }
-
-    m_physical_types.clear();
-    m_physical_types.reserve(m_physical_extruder_count);
-    for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
-        m_physical_types.push_back(
-            i < input.physical_types.size() ? input.physical_types.at(i) : std::string{}
+    for (size_t i = 0; i < m_recipe_rows->size() && i < m_working_virtual_extruders.size(); ++i) {
+        m_recipe_rows->set(
+            ColorMixRecipeRow::make_row_data(
+                m_working_virtual_extruders.at(i),
+                m_physical_colors,
+                m_physical_types
+            ),
+            i
         );
     }
 
-    for (size_t i = 0; i < m_recipe_rows.size() && i < m_working_virtual_extruders.size(); ++i) {
-        m_recipe_rows.at(i)->update(
-            ColorMixRecipeRow::make_row_data(m_working_virtual_extruders.at(i), m_physical_colors)
-        );
-    }
-
-    this->rebuild_filter_buttons();
+    this->update_extruder_filter_colors();
+    this->reset_blend_candidates();
 
     if (this->selected_index() >= 0) {
         this->update_preview_and_validation();
-    } else {
-        this->rebuild_preset_grid();
     }
 }
 
@@ -327,14 +377,14 @@ void ColorMixDialog::create_left_panel(Item* parent)
     deselect_catcher->set_position_type(YGPositionTypeAbsolute);
     deselect_catcher->set_left(0);
     deselect_catcher->set_top(0);
-    deselect_catcher->set_width_percent(100);
-    deselect_catcher->set_height_percent(100);
+    deselect_catcher->set_right(0);
+    deselect_catcher->set_bottom(0);
     deselect_catcher->set_background_color(transparent_color, transparent_color);
     deselect_catcher->set_allow_overlap(true);
     deselect_catcher->callbacks().action = deselect_action;
 
     Text* panel_title =
-        left_panel->emplace_back<Text>(_u8L("Virtual Extruders"), Render::ImguiFontType::Bold);
+        left_panel->emplace_back<Text>(_u8L("Virtual extruders"), Render::ImguiFontType::Bold);
     panel_title->set_margin({16_fpx, 14_fpx, 16_fpx, 10_fpx});
     panel_title->set_flex_shrink(0);
 
@@ -344,11 +394,19 @@ void ColorMixDialog::create_left_panel(Item* parent)
     list_scroll->set_orientation(Orientation::Vertical);
     list_scroll->set_padding({8_fpx, 0, 18_fpx, 0});
 
-    m_list_container = list_scroll->emplace_back<Item>();
-    m_list_container->set_orientation(Orientation::Vertical);
-    m_list_container->set_width_percent(100);
-    m_list_container->set_gap(2_fpx);
-    m_list_container->set_flex_shrink(0);
+    const auto row_clicked = [this](const size_t index) -> void
+    { this->on_row_clicked(static_cast<int>(index)); };
+
+    const auto row_remove_clicked = [this](const size_t index) -> void
+    { this->on_row_remove_clicked(static_cast<int>(index)); };
+
+    m_recipe_list_view = list_scroll->emplace_back<RecipeListView>(
+        RecipeListViewFactory{row_clicked, row_remove_clicked}
+    );
+    m_recipe_list_view->set_orientation(Orientation::Vertical);
+    m_recipe_list_view->set_gap(2_fpx);
+    m_recipe_list_view->set_flex_shrink(0);
+    m_recipe_list_view->set_source_list(m_recipe_rows.get());
 
     RectangleButton* list_empty_space = list_scroll->emplace_back<RectangleButton>();
     list_empty_space->set_flex_grow(1.f);
@@ -406,15 +464,24 @@ void ColorMixDialog::create_presets_pane(Item* pane)
     ));
     intro_text->set_wrap_mode(Text::WrapMode::Wrap);
     intro_text->set_text_color(muted_text_color);
+    intro_text->set_flex_shrink(0);
 
     Text* filter_label =
         pane->emplace_back<Text>(_u8L("Toggle extruders to filter the blends shown below"));
     filter_label->set_text_color(muted_text_color);
+    filter_label->set_flex_shrink(0);
 
-    m_filter_button_row = pane->emplace_back<Item>();
-    m_filter_button_row->set_orientation(Orientation::Horizontal);
-    m_filter_button_row->set_flex_wrap(YGWrapWrap);
-    m_filter_button_row->set_gap(4_fpx);
+    const auto filter_button_clicked = [this](const size_t index) -> void
+    { this->on_filter_button_clicked(index); };
+
+    m_filter_list_view = pane->emplace_back<ExtruderFilterListView>(
+        ExtruderFilterListViewFactory{filter_button_clicked}
+    );
+    m_filter_list_view->set_orientation(Orientation::Horizontal);
+    m_filter_list_view->set_flex_wrap(YGWrapWrap);
+    m_filter_list_view->set_gap(4_fpx);
+    m_filter_list_view->set_flex_shrink(0);
+    m_filter_list_view->set_source_list(m_extruder_filters.get());
 
     ScrollArea* presets_scroll = pane->emplace_back<ScrollArea>();
     presets_scroll->set_flex_grow(1.f);
@@ -423,23 +490,42 @@ void ColorMixDialog::create_presets_pane(Item* pane)
 
     Item* presets_content = presets_scroll->emplace_back<Item>();
     presets_content->set_orientation(Orientation::Vertical);
-    presets_content->set_width_percent(100);
     presets_content->set_gap(PANEL_GAP);
     presets_content->set_flex_shrink(0);
 
     m_two_color_presets_title =
         presets_content->emplace_back<Text>(_u8L("Two-color blends"), Render::ImguiFontType::Bold);
-    m_two_color_presets_wrap = presets_content->emplace_back<Item>();
+
+    const auto two_color_preset_clicked = [this](const size_t index) -> void
+    {
+        const BlendPreset preset = m_two_color_presets->at(index).preset;
+        this->on_preset_clicked(preset);
+    };
+
+    m_two_color_presets_wrap = presets_content->emplace_back<BlendTileListView>(
+        BlendTileListViewFactory{two_color_preset_clicked}
+    );
     m_two_color_presets_wrap->set_orientation(Orientation::Horizontal);
     m_two_color_presets_wrap->set_flex_wrap(YGWrapWrap);
     m_two_color_presets_wrap->set_gap(PANEL_GAP);
+    m_two_color_presets_wrap->set_source_list(m_two_color_presets.get());
 
     m_three_color_presets_title = presets_content->emplace_back<
         Text>(_u8L("Three-color blends"), Render::ImguiFontType::Bold);
-    m_three_color_presets_wrap = presets_content->emplace_back<Item>();
+
+    const auto three_color_preset_clicked = [this](const size_t index) -> void
+    {
+        const BlendPreset preset = m_three_color_presets->at(index).preset;
+        this->on_preset_clicked(preset);
+    };
+
+    m_three_color_presets_wrap = presets_content->emplace_back<BlendTileListView>(
+        BlendTileListViewFactory{three_color_preset_clicked}
+    );
     m_three_color_presets_wrap->set_orientation(Orientation::Horizontal);
     m_three_color_presets_wrap->set_flex_wrap(YGWrapWrap);
     m_three_color_presets_wrap->set_gap(PANEL_GAP);
+    m_three_color_presets_wrap->set_source_list(m_three_color_presets.get());
 
     m_presets_empty_hint = presets_content->emplace_back<Text>(_u8L(
         "No combinations available. Presets pair up filaments of the same "
@@ -449,6 +535,10 @@ void ColorMixDialog::create_presets_pane(Item* pane)
     m_presets_empty_hint->set_wrap_mode(Text::WrapMode::Wrap);
     m_presets_empty_hint->set_text_color(muted_text_color);
     m_presets_empty_hint->set_visible(false);
+
+    m_two_color_presets->set_source_model(m_blend_preset_filter.get());
+    m_three_color_presets->set_source_model(m_blend_preset_filter.get());
+    m_blend_preset_filter->set_source_model(m_blend_candidates.get());
 }
 
 void ColorMixDialog::create_editor_pane(Item* pane)
@@ -463,42 +553,20 @@ void ColorMixDialog::create_editor_pane(Item* pane)
 
     Item* editor_content = editor_scroll->emplace_back<Item>();
     editor_content->set_orientation(Orientation::Vertical);
-    editor_content->set_width_percent(100);
     editor_content->set_gap(PANEL_GAP);
     editor_content->set_flex_shrink(0);
 
-    m_editor_title =
-        editor_content->emplace_back<Text>(_u8L("Virtual Extruder"), Render::ImguiFontType::Bold);
+    Item* title_row = editor_content->emplace_back<Item>();
+    title_row->set_orientation(Orientation::Horizontal);
+    title_row->set_align_items(YGAlignCenter);
+    title_row->set_gap(PANEL_GAP);
 
-    m_editor_description = editor_content->emplace_back<Text>(std::string{});
-    m_editor_description->set_wrap_mode(Text::WrapMode::Wrap);
-    m_editor_description->set_text_color(m_theme->color_imgui(Color::Text, ColorGroup::Disabled));
-
-    m_editor_rows = editor_content->emplace_back<Item>();
-    m_editor_rows->set_orientation(Orientation::Vertical);
-    m_editor_rows->set_gap(6_fpx);
-
-    m_add_component_button = editor_content->emplace_back<LayoutButton>(_u8L("Add component"));
-    m_add_component_button->set_content_padding({10_fpx, 5_fpx});
-    m_add_component_button->set_self_align(YGAlignFlexStart);
-    m_add_component_button->callbacks().action = [this]()
-    { this->on_add_or_remove_component_clicked(); };
-
-    Item* color_block = editor_content->emplace_back<Item>();
-    color_block->set_orientation(Orientation::Vertical);
-    color_block->set_gap(6_fpx);
-
-    Text* color_label = color_block->emplace_back<Text>(_u8L("Display color"));
-    color_label->set_text_color(m_theme->color_imgui(Color::Text, ColorGroup::Disabled));
-
-    Item* color_row = color_block->emplace_back<Item>();
-    color_row->set_orientation(Orientation::Horizontal);
-    color_row->set_align_items(YGAlignCenter);
-    color_row->set_gap(PANEL_GAP);
-
-    m_color_picker_button = color_row->emplace_back<ColorPickerButton>();
-    m_color_picker_button->set_width(100_fpx);
+    m_color_picker_button = title_row->emplace_back<ColorPickerButton>();
+    m_color_picker_button->set_width(28_fpx);
     m_color_picker_button->set_height(28_fpx);
+    m_color_picker_button->set_rounding(6.f);
+    m_color_picker_button->set_flex_shrink(0);
+    m_color_picker_button->set_background_border_width(1.f);
     m_color_picker_button->set_background_color_border(
         m_theme->color_imgui(Color::Text, ColorGroup::Disabled),
         m_theme->color_imgui(Color::Text, ColorGroup::Disabled)
@@ -515,19 +583,49 @@ void ColorMixDialog::create_editor_pane(Item* pane)
         }
 
         m_working_virtual_extruders.at(selection).color =
-            Algorithms::Color::encode_color(ColorRGB(color.Value.x, color.Value.y, color.Value.z));
+            encode_color(ColorRGB(color.Value.x, color.Value.y, color.Value.z));
         this->update_preview_and_validation();
     };
 
-    m_reset_display_color_button = color_row->emplace_back<LayoutButton>(_u8L("Reset to blended"));
-    m_reset_display_color_button->set_content_padding({8_fpx, 4_fpx});
+    m_reset_display_color_button = title_row->emplace_back<
+        LayoutButton>(std::string{}, Render::Icon::UndoGizmo, _u8L("Reset to the blended color"));
+    m_reset_display_color_button->set_width(20_fpx);
+    m_reset_display_color_button->set_height(20_fpx);
+    m_reset_display_color_button->set_content_padding({3_fpx});
+    m_reset_display_color_button->set_flex_shrink(0);
     m_reset_display_color_button->set_background_color(Color::ButtonTransparent);
+    m_reset_display_color_button->set_icon_tint(m_theme->color_imgui(Color::AccentTertiary));
     m_reset_display_color_button->set_visible(false);
     m_reset_display_color_button->callbacks().action = [this]()
     {
         this->clear_color_override();
         this->update_preview_and_validation();
     };
+
+    m_editor_title =
+        title_row->emplace_back<Text>(_u8L("Virtual extruder"), Render::ImguiFontType::Bold);
+    m_editor_title->set_flex_grow(1.f);
+
+    m_add_component_button = title_row->emplace_back<LayoutButton>(_u8L("Add component"));
+    m_add_component_button->set_content_padding({10_fpx, 5_fpx});
+    m_add_component_button->set_flex_shrink(0);
+    m_add_component_button->callbacks().action = [this]()
+    { this->on_add_or_remove_component_clicked(); };
+
+    m_editor_description = editor_content->emplace_back<Text>(std::string{});
+    m_editor_description->set_wrap_mode(Text::WrapMode::Wrap);
+    m_editor_description->set_text_color(m_theme->color_imgui(Color::Text, ColorGroup::Disabled));
+
+    m_editor_stack = editor_content->emplace_back<StackLayout>();
+    m_editor_stack->set_orientation(Orientation::Vertical);
+
+    this->create_two_component_editor(m_editor_stack->emplace_back<Item>());
+    this->create_three_component_editor(m_editor_stack->emplace_back<Item>());
+    m_editor_stack->set_current_index(0);
+
+    m_filament_types_warning = editor_content->emplace_back<WarningPanel>(Color::Warning);
+    m_filament_types_warning->set_flex_shrink(0);
+    m_filament_types_warning->set_visible(false);
 
     Text* sequence_title = editor_content->emplace_back<Text>(_u8L("Layer sequence preview"));
     sequence_title->set_text_color(m_theme->color_imgui(Color::Text, ColorGroup::Disabled));
@@ -536,6 +634,88 @@ void ColorMixDialog::create_editor_pane(Item* pane)
     m_sequence_bar->set_tooltip(
         _u8L("Each cell is one print layer. The pattern shows how filaments alternate.")
     );
+}
+
+void ColorMixDialog::create_two_component_editor(Item* pane)
+{
+    pane->set_orientation(Orientation::Vertical);
+    pane->set_gap(6_fpx);
+
+    Item* dropdown_row = pane->emplace_back<Item>();
+    dropdown_row->set_orientation(Orientation::Horizontal);
+    dropdown_row->set_justify_content(YGJustifySpaceBetween);
+    dropdown_row->set_margin({0, 0, 0, 4_fpx});
+
+    ColorDropdown* dropdown_a = this->add_extruder_dropdown(dropdown_row, 0);
+    dropdown_a->set_width(200_fpx);
+
+    ColorDropdown* dropdown_b = this->add_extruder_dropdown(dropdown_row, 1);
+    dropdown_b->set_width(200_fpx);
+
+    m_inline_ratio_bar                            = pane->emplace_back<BlendRatioBar>();
+    m_inline_ratio_bar->callbacks().ratio_changed = [this](int) { this->on_composition_changed(); };
+
+    Item* percent_row = pane->emplace_back<Item>();
+    percent_row->set_orientation(Orientation::Horizontal);
+    percent_row->set_justify_content(YGJustifySpaceBetween);
+
+    Text* percent_a = this->add_percent_text(percent_row);
+    Text* percent_b = this->add_percent_text(percent_row);
+    percent_b->set_align({AlignH::Right, AlignV::Top});
+
+    m_two_component_controls.dropdowns     = {dropdown_a, dropdown_b};
+    m_two_component_controls.percent_texts = {percent_a, percent_b};
+}
+
+void ColorMixDialog::create_three_component_editor(Item* pane)
+{
+    pane->set_orientation(Orientation::Vertical);
+    pane->set_gap(6_fpx);
+
+    Item* mixer_column = pane->emplace_back<Item>();
+    mixer_column->set_orientation(Orientation::Vertical);
+    mixer_column->set_align_items(YGAlignCenter);
+    mixer_column->set_self_align(YGAlignCenter);
+    mixer_column->set_width(380_fpx);
+    mixer_column->set_gap(6_fpx);
+
+    Text* percent_0 = this->add_percent_text(mixer_column);
+    percent_0->set_align({AlignH::Center, AlignV::Top});
+
+    ColorDropdown* dropdown_0 = this->add_extruder_dropdown(mixer_column, 0);
+
+    m_inline_triangle = mixer_column->emplace_back<BarycentricRatioPicker>();
+    m_inline_triangle->set_width(256_fpx);
+    m_inline_triangle->set_height(200_fpx);
+    m_inline_triangle->callbacks().weights_changed = [this]() { this->on_composition_changed(); };
+
+    Item* bottom_row = mixer_column->emplace_back<Item>();
+    bottom_row->set_orientation(Orientation::Horizontal);
+    bottom_row->set_self_align(YGAlignStretch);
+    bottom_row->set_gap(12_fpx);
+
+    m_three_component_controls.dropdowns.push_back(dropdown_0);
+    m_three_component_controls.percent_texts.push_back(percent_0);
+
+    const auto create_bottom_column = [this, bottom_row](const size_t component_index) -> void
+    {
+        Item* column = bottom_row->emplace_back<Item>();
+        column->set_orientation(Orientation::Vertical);
+        column->set_align_items(YGAlignCenter);
+        column->set_flex_grow(1.f);
+        column->set_gap(4_fpx);
+
+        m_three_component_controls.dropdowns.push_back(
+            this->add_extruder_dropdown(column, component_index)
+        );
+
+        Text* percent_text = this->add_percent_text(column);
+        percent_text->set_align({AlignH::Center, AlignV::Top});
+        m_three_component_controls.percent_texts.push_back(percent_text);
+    };
+
+    create_bottom_column(1);
+    create_bottom_column(2);
 }
 
 void ColorMixDialog::create_footer(Item* parent)
@@ -572,25 +752,8 @@ void ColorMixDialog::update_from_project()
 
     m_physical_extruder_count = input.physical_extruder_count;
 
-    m_physical_colors.clear();
-    m_physical_colors.reserve(m_physical_extruder_count);
-    for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
-        std::string color =
-            i < input.physical_colors.size() ? input.physical_colors.at(i) : std::string{};
-        if (color.empty()) {
-            color = FALLBACK_COLOR;
-        }
-
-        m_physical_colors.push_back(std::move(color));
-    }
-
-    m_physical_types.clear();
-    m_physical_types.reserve(m_physical_extruder_count);
-    for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
-        m_physical_types.push_back(
-            i < input.physical_types.size() ? input.physical_types.at(i) : std::string{}
-        );
-    }
+    m_physical_colors = std::move(input.physical_colors);
+    m_physical_types  = std::move(input.physical_types);
 
     m_object_use_counts         = std::move(input.object_use_counts);
     m_working_virtual_extruders = std::move(input.virtual_extruders);
@@ -605,19 +768,20 @@ void ColorMixDialog::update_from_project()
 
     m_removed_ids.clear();
 
-    m_preset_extruders_enabled.assign(m_physical_extruder_count, true);
     m_selected_index = -1;
 
     m_few_extruders_hint->set_visible(m_physical_extruder_count < 2);
     m_add_blend_button->set_enabled(m_physical_extruder_count >= 2);
 
-    this->rebuild_filter_buttons();
-    this->rebuild_virtual_extruder_list(-1);
+    this->reset_extruder_filters();
+    this->reset_blend_candidates();
+    this->reset_recipe_rows();
+    this->select_row(-1);
 }
 
 void ColorMixDialog::close_action()
 {
-    m_navigator.set_opened_dialog(m_logical_printer_settings_dialog);
+    m_navigator.set_opened_dialog(nullptr);
 }
 
 void ColorMixDialog::on_accept_clicked()
@@ -639,34 +803,21 @@ void ColorMixDialog::on_accept_clicked()
     this->close_action();
 }
 
-void ColorMixDialog::rebuild_virtual_extruder_list(int select_index)
+void ColorMixDialog::on_filter_button_clicked(const size_t index)
 {
-    clear_children_later(m_list_container);
-    m_recipe_rows.clear();
+    ExtruderFilterData filter = m_extruder_filters->at(index);
+    filter.enabled            = !filter.enabled;
+    m_extruder_filters->set(std::move(filter), index);
 
-    for (size_t i = 0; i < m_working_virtual_extruders.size(); ++i) {
-        ColorMixRecipeRow* row = m_list_container->emplace_back<ColorMixRecipeRow>(
-            ColorMixRecipeRow::make_row_data(m_working_virtual_extruders.at(i), m_physical_colors)
-        );
-        const int row_index             = static_cast<int>(i);
-        row->callbacks().selected       = [this, row_index]() { this->on_row_clicked(row_index); };
-        row->callbacks().remove_clicked = [this, row_index]()
-        { this->on_row_remove_clicked(row_index); };
-        m_recipe_rows.push_back(row);
-    }
-
-    if (select_index >= 0 && select_index < static_cast<int>(m_working_virtual_extruders.size())) {
-        this->select_row(select_index);
-    } else {
-        this->select_row(-1);
-    }
+    m_blend_preset_filter->invalidate();
+    this->update_preset_sections_visibility();
 }
 
 void ColorMixDialog::select_row(int index)
 {
     m_selected_index = index;
-    for (size_t i = 0; i < m_recipe_rows.size(); ++i) {
-        m_recipe_rows.at(i)->set_selected(static_cast<int>(i) == index);
+    for (size_t i = 0; i < m_recipe_list_view->list_item_count(); ++i) {
+        m_recipe_list_view->item_at(i)->set_selected(static_cast<int>(i) == index);
     }
 
     this->update_right_panel_visibility();
@@ -709,7 +860,8 @@ void ColorMixDialog::on_row_remove_clicked(int index)
             m_removed_ids.push_back(removed_id);
         }
 
-        this->rebuild_virtual_extruder_list(-1);
+        m_recipe_rows->remove({static_cast<size_t>(index)});
+        this->select_row(-1);
     };
 
     const int users = this->count_objects_using(removed_id);
@@ -718,6 +870,8 @@ void ColorMixDialog::on_row_remove_clicked(int index)
             _u8L("Remove virtual extruder"),
             fmt::format(
                 fmt::runtime(_u8L(
+                    // TRN 1st {} is the number of the virtual extruder, 2nd {} is the count of
+                    // objects and modifiers that use it
                     "Virtual extruder {} is assigned to {} object(s) or modifier(s). "
                     "Removing it will reset their extruder to default. Continue?"
                 )),
@@ -740,7 +894,7 @@ void ColorMixDialog::update_right_panel_visibility()
 {
     const bool has_selection = this->selected_index() >= 0;
     if (!has_selection) {
-        this->rebuild_preset_grid();
+        this->update_blend_usage();
     }
 
     m_right_stack->set_current_index(has_selection ? 1 : 0);
@@ -754,46 +908,46 @@ void ColorMixDialog::populate_editor_from_selection()
     }
 
     m_editor_title->set_text(recipe_title(m_working_virtual_extruders.at(selection)));
-    this->rebuild_component_rows();
+    this->update_component_editor();
     this->update_preview_and_validation();
 }
 
-void ColorMixDialog::clear_editor_rows()
+Yoga::ColorDropdown*
+ColorMixDialog::add_extruder_dropdown(Item* parent, const size_t component_index)
 {
-    clear_children_later(m_editor_rows);
-    m_component_dropdowns.clear();
-    m_component_percent_texts.clear();
-    m_inline_ratio_bar = nullptr;
-    m_inline_triangle  = nullptr;
-}
-
-Yoga::ColorDropdown* ColorMixDialog::create_extruder_dropdown(
-    Item* parent,
-    unsigned int extruder_id_1based,
-    const std::function<void(unsigned int extruder_id_1based)>& on_selected
-)
-{
-    if (extruder_id_1based == 0 || extruder_id_1based > m_physical_extruder_count) {
-        extruder_id_1based = 1;
-    }
-
     // A blend is always made of physical filaments, so the virtual extruders are left out.
     ColorDropdown* dropdown =
         parent->emplace_back<ColorDropdown>(m_project_interactor, false, true, false);
     dropdown->set_width(EXTRUDER_DROPDOWN_WIDTH);
     dropdown->set_flex_shrink(0);
-    dropdown->set_current_index(
-        dropdown->index_of_extruder_id(static_cast<int>(extruder_id_1based))
-    );
-    dropdown->on_color_selected = [dropdown, on_selected](size_t index)
-    { on_selected(static_cast<unsigned int>(dropdown->extruder_id_at(index))); };
+    dropdown->on_color_selected = [this, dropdown, component_index](const size_t index) -> void
+    {
+        const int selection = this->selected_index();
+        if (selection < 0
+            || component_index >= m_working_virtual_extruders.at(selection).components.size())
+        {
+            return;
+        }
+
+        m_working_virtual_extruders.at(selection).components.at(component_index).extruder_id =
+            static_cast<unsigned int>(dropdown->extruder_id_at(index));
+        this->on_composition_changed();
+    };
+
     return dropdown;
 }
 
-void ColorMixDialog::rebuild_component_rows()
+Yoga::Text* ColorMixDialog::add_percent_text(Item* parent)
 {
-    this->clear_editor_rows();
+    Text* percent_text = parent->emplace_back<Text>(std::string{}, Render::ImguiFontType::Bold);
+    percent_text->set_font_size(PERCENT_FONT_SIZE);
+    percent_text->set_text_color(m_theme->color_imgui(Color::Text));
+    percent_text->set_min_width(60_fpx);
+    return percent_text;
+}
 
+void ColorMixDialog::update_component_editor()
+{
     const int selection = this->selected_index();
     if (selection < 0) {
         return;
@@ -804,140 +958,38 @@ void ColorMixDialog::rebuild_component_rows()
     const bool is_two_component             = component_count == 2;
     const bool is_three_component           = component_count == 3;
 
-    const auto component_extruder_changed = [this](size_t component_index)
-    {
-        return [this, component_index](unsigned int extruder_id_1based)
-        {
-            const int selection = this->selected_index();
-            if (selection < 0
-                || component_index >= m_working_virtual_extruders.at(selection).components.size())
-            {
-                return;
-            }
-
-            m_working_virtual_extruders.at(selection).components.at(component_index).extruder_id =
-                extruder_id_1based;
-            this->on_composition_changed();
-        };
-    };
-
-    const auto make_percent_text = [](Item* parent) -> Text*
-    {
-        Text* percent_text = parent->emplace_back<Text>(std::string{}, Render::ImguiFontType::Bold);
-        percent_text->set_font_size(PERCENT_FONT_SIZE);
-        percent_text->set_text_color(m_theme->color_imgui(Color::Text));
-        percent_text->set_min_width(60_fpx);
-        return percent_text;
-    };
-
     if (is_two_component) {
-        Item* dropdown_row = m_editor_rows->emplace_back<Item>();
-        dropdown_row->set_orientation(Orientation::Horizontal);
-        dropdown_row->set_justify_content(YGJustifySpaceBetween);
-        dropdown_row->set_margin({0, 0, 0, 4_fpx});
-
-        ColorDropdown* dropdown_a = this->create_extruder_dropdown(
-            dropdown_row,
-            virtual_extruder.components.at(0).extruder_id,
-            component_extruder_changed(0)
-        );
-        dropdown_a->set_width(200_fpx);
-
-        ColorDropdown* dropdown_b = this->create_extruder_dropdown(
-            dropdown_row,
-            virtual_extruder.components.at(1).extruder_id,
-            component_extruder_changed(1)
-        );
-        dropdown_b->set_width(200_fpx);
-
-        m_inline_ratio_bar = m_editor_rows->emplace_back<BlendRatioBar>();
-        m_inline_ratio_bar->set_width_percent(100);
-        m_inline_ratio_bar->set_tooltip(_u8L(
-            "Drag the handle to adjust the mix ratio. "
-            "More % = more layers of that filament per cycle."
-        ));
-        m_inline_ratio_bar->callbacks().ratio_changed = [this](int)
-        { this->on_composition_changed(); };
+        m_current_component_controls = &m_two_component_controls;
         m_inline_ratio_bar->set_ratio(
             static_cast<int>(std::round(virtual_extruder.components.at(0).ratio * 100.0))
         );
-
-        m_component_dropdowns.push_back(dropdown_a);
-        m_component_dropdowns.push_back(dropdown_b);
-
-        Item* percent_row = m_editor_rows->emplace_back<Item>();
-        percent_row->set_orientation(Orientation::Horizontal);
-        percent_row->set_justify_content(YGJustifySpaceBetween);
-
-        m_component_percent_texts.push_back(make_percent_text(percent_row));
-        Text* percent_b = make_percent_text(percent_row);
-        percent_b->set_align({AlignH::Right, AlignV::Top});
-        m_component_percent_texts.push_back(percent_b);
+        m_editor_stack->set_current_index(0);
     } else if (is_three_component) {
-        Item* mixer_column = m_editor_rows->emplace_back<Item>();
-        mixer_column->set_orientation(Orientation::Vertical);
-        mixer_column->set_align_items(YGAlignCenter);
-        mixer_column->set_self_align(YGAlignCenter);
-        mixer_column->set_width(380_fpx);
-        mixer_column->set_gap(6_fpx);
-
-        Text* percent_0 = make_percent_text(mixer_column);
-        percent_0->set_align({AlignH::Center, AlignV::Top});
-        m_component_percent_texts.push_back(percent_0);
-
-        ColorDropdown* dropdown_0 = this->create_extruder_dropdown(
-            mixer_column,
-            virtual_extruder.components.at(0).extruder_id,
-            component_extruder_changed(0)
-        );
-        dropdown_0->set_width(220_fpx);
-
-        m_inline_triangle = mixer_column->emplace_back<BarycentricRatioPicker>();
-        m_inline_triangle->set_width(256_fpx);
-        m_inline_triangle->set_height(200_fpx);
-        m_inline_triangle->set_tooltip(_u8L(
-            "Drag the handle to set the share of each filament. "
-            "Closer to a corner = more of that filament."
-        ));
-        m_inline_triangle->callbacks().weights_changed = [this]()
-        { this->on_composition_changed(); };
+        m_current_component_controls = &m_three_component_controls;
         m_inline_triangle->set_weights(
             virtual_extruder.components.at(0).ratio,
             virtual_extruder.components.at(1).ratio,
             virtual_extruder.components.at(2).ratio
         );
+        m_editor_stack->set_current_index(1);
+    } else {
+        m_current_component_controls = nullptr;
+    }
 
-        Item* bottom_row = mixer_column->emplace_back<Item>();
-        bottom_row->set_orientation(Orientation::Horizontal);
-        bottom_row->set_width_percent(100);
-        bottom_row->set_gap(12_fpx);
+    m_editor_stack->set_visible(m_current_component_controls != nullptr);
 
-        const auto make_bottom_column = [&](size_t component_index) -> ColorDropdown*
-        {
-            Item* column = bottom_row->emplace_back<Item>();
-            column->set_orientation(Orientation::Vertical);
-            column->set_align_items(YGAlignCenter);
-            column->set_flex_grow(1.f);
-            column->set_gap(4_fpx);
+    if (m_current_component_controls != nullptr) {
+        for (size_t i = 0; i < component_count; ++i) {
+            unsigned int extruder_id_1based = virtual_extruder.components.at(i).extruder_id;
+            if (extruder_id_1based == 0 || extruder_id_1based > m_physical_extruder_count) {
+                extruder_id_1based = 1;
+            }
 
-            ColorDropdown* dropdown = this->create_extruder_dropdown(
-                column,
-                virtual_extruder.components.at(component_index).extruder_id,
-                component_extruder_changed(component_index)
+            ColorDropdown* dropdown = m_current_component_controls->dropdowns.at(i);
+            dropdown->set_current_index(
+                dropdown->index_of_extruder_id(static_cast<int>(extruder_id_1based))
             );
-
-            Text* percent_text = make_percent_text(column);
-            percent_text->set_align({AlignH::Center, AlignV::Top});
-            m_component_percent_texts.push_back(percent_text);
-            return dropdown;
-        };
-
-        ColorDropdown* dropdown_1 = make_bottom_column(1);
-        ColorDropdown* dropdown_2 = make_bottom_column(2);
-
-        m_component_dropdowns.push_back(dropdown_0);
-        m_component_dropdowns.push_back(dropdown_1);
-        m_component_dropdowns.push_back(dropdown_2);
+        }
     }
 
     if (is_two_component) {
@@ -948,7 +1000,8 @@ void ColorMixDialog::rebuild_component_rows()
         );
         m_add_component_button->set_enabled(m_physical_extruder_count >= 3);
         m_editor_description->set_text(_u8L(
-            "Drag the slider to set how many layers each filament gets in the repeating pattern."
+            "Drag the slider to set the share of each filament. "
+            "The larger the share, the more layers that filament gets in the repeating pattern."
         ));
     } else if (is_three_component) {
         m_add_component_button->set_label(_u8L("Remove third extruder"));
@@ -957,9 +1010,11 @@ void ColorMixDialog::rebuild_component_rows()
             _u8L("Remove the third filament and go back to the two-way slider mixer.")
         );
         m_add_component_button->set_enabled(true);
-        m_editor_description->set_text(
-            _u8L("Drag the handle inside the triangle to set the share of each filament.")
-        );
+        m_editor_description->set_text(_u8L(
+            "Drag the handle inside the triangle to set the share of each filament. "
+            "The closer the handle is to a corner, the more layers that filament gets in the "
+            "repeating pattern."
+        ));
     }
 }
 
@@ -973,11 +1028,12 @@ void ColorMixDialog::update_preview_and_validation()
     VirtualExtruder& virtual_extruder = m_working_virtual_extruders.at(selection);
     const size_t component_count      = virtual_extruder.components.size();
 
-    for (size_t i = 0; i < component_count && i < m_component_dropdowns.size(); ++i) {
-        virtual_extruder.components.at(i)
-            .extruder_id = static_cast<unsigned int>(m_component_dropdowns.at(i)->extruder_id_at(
-            m_component_dropdowns.at(i)->current_index()
-        ));
+    if (m_current_component_controls != nullptr) {
+        for (size_t i = 0; i < component_count; ++i) {
+            ColorDropdown* dropdown = m_current_component_controls->dropdowns.at(i);
+            virtual_extruder.components.at(i).extruder_id =
+                static_cast<unsigned int>(dropdown->extruder_id_at(dropdown->current_index()));
+        }
     }
 
     if (component_count == 2 && m_inline_ratio_bar != nullptr) {
@@ -1027,10 +1083,14 @@ void ColorMixDialog::update_preview_and_validation()
         }
     }
 
-    for (size_t i = 0; i < component_count && i < m_component_percent_texts.size(); ++i) {
-        const int percent =
-            static_cast<int>(std::round(virtual_extruder.components.at(i).ratio * 100.0));
-        m_component_percent_texts.at(i)->set_text(fmt::format("{}%", percent));
+    if (m_current_component_controls != nullptr) {
+        for (size_t i = 0; i < component_count; ++i) {
+            const int percent =
+                static_cast<int>(std::round(virtual_extruder.components.at(i).ratio * 100.0));
+            m_current_component_controls->percent_texts.at(i)->set_text(
+                fmt::format("{}%", percent)
+            );
+        }
     }
 
     m_sequence_bar->set_cycle(std::move(cycle_colors));
@@ -1045,18 +1105,39 @@ void ColorMixDialog::update_preview_and_validation()
     m_color_picker_button->set_color(display_color);
     m_color_picker_button->set_background_color(display_color, display_color);
     m_reset_display_color_button->set_visible(virtual_extruder.color.has_value());
+
+    const std::vector<std::string> mixed_types =
+        mixed_filament_types(virtual_extruder, m_physical_types);
+    m_filament_types_warning->set_visible(!mixed_types.empty());
+    if (!mixed_types.empty()) {
+        m_filament_types_warning->set_warning(
+            _u8L("Mixed filament types"),
+            fmt::format(
+                fmt::runtime(_u8L(
+                    // TRN {} is a list of filament types, e.g. "PLA + PETG"
+                    "This blend mixes {}. Different materials usually need different "
+                    "temperatures and may not stick to each other, so the print may fail."
+                )),
+                fmt::join(mixed_types, " + ")
+            )
+        );
+    }
 }
 
 void ColorMixDialog::update_selected_list_row()
 {
     const int selection = this->selected_index();
-    if (selection < 0 || selection >= static_cast<int>(m_recipe_rows.size())) {
+    if (selection < 0 || selection >= static_cast<int>(m_recipe_rows->size())) {
         return;
     }
 
-    m_recipe_rows.at(selection)->update(
-        ColorMixRecipeRow::
-            make_row_data(m_working_virtual_extruders.at(selection), m_physical_colors)
+    m_recipe_rows->set(
+        ColorMixRecipeRow::make_row_data(
+            m_working_virtual_extruders.at(selection),
+            m_physical_colors,
+            m_physical_types
+        ),
+        selection
     );
 }
 
@@ -1071,7 +1152,12 @@ void ColorMixDialog::on_add_blend_clicked()
     virtual_extruder.components.push_back({1u, 0.5});
     virtual_extruder.components.push_back({2u, 0.5});
     m_working_virtual_extruders.push_back(std::move(virtual_extruder));
-    this->rebuild_virtual_extruder_list(static_cast<int>(m_working_virtual_extruders.size()) - 1);
+
+    m_recipe_rows->append(
+        ColorMixRecipeRow::
+            make_row_data(m_working_virtual_extruders.back(), m_physical_colors, m_physical_types)
+    );
+    this->select_row(static_cast<int>(m_working_virtual_extruders.size()) - 1);
 }
 
 void ColorMixDialog::on_composition_changed()
@@ -1112,7 +1198,7 @@ void ColorMixDialog::on_add_or_remove_component_clicked()
     virtual_extruder.components.push_back({next_id, balanced.back() / 100.0});
     virtual_extruder.color.reset();
 
-    this->rebuild_component_rows();
+    this->update_component_editor();
     this->update_preview_and_validation();
 }
 
@@ -1146,34 +1232,42 @@ void ColorMixDialog::on_remove_component(size_t component_index)
 
     virtual_extruder.color.reset();
 
-    this->rebuild_component_rows();
+    this->update_component_editor();
     this->update_preview_and_validation();
 }
 
-void ColorMixDialog::rebuild_filter_buttons()
+void ColorMixDialog::reset_extruder_filters()
 {
-    clear_children_later(m_filter_button_row);
-
+    std::vector<ExtruderFilterData> filters;
+    filters.reserve(m_physical_extruder_count);
     for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
-        ExtruderFilterButton* filter_button = m_filter_button_row->emplace_back<
-            ExtruderFilterButton>(i + 1, this->physical_color(i + 1));
-        if (i < m_preset_extruders_enabled.size()) {
-            filter_button->set_checked(m_preset_extruders_enabled.at(i));
-        }
-
-        filter_button->set_tooltip(
-            fmt::format(fmt::runtime(_u8L("Toggle extruder {} for preset generation")), i + 1)
-        );
-
-        const unsigned int extruder_index          = i;
-        filter_button->callbacks().checked_changed = [this, extruder_index](bool checked)
-        {
-            if (extruder_index < m_preset_extruders_enabled.size()) {
-                m_preset_extruders_enabled.at(extruder_index) = checked;
-                this->rebuild_preset_grid();
-            }
-        };
+        filters.push_back({i + 1, this->physical_color(i + 1), true});
     }
+
+    m_extruder_filters->reset(std::move(filters));
+}
+
+void ColorMixDialog::update_extruder_filter_colors()
+{
+    for (size_t i = 0; i < m_extruder_filters->size(); ++i) {
+        ExtruderFilterData filter = m_extruder_filters->at(i);
+        filter.color              = this->physical_color(filter.extruder_id_1based);
+
+        m_extruder_filters->set(std::move(filter), i);
+    }
+}
+
+void ColorMixDialog::reset_recipe_rows()
+{
+    std::vector<RecipeRowData> rows;
+    rows.reserve(m_working_virtual_extruders.size());
+    for (const VirtualExtruder& virtual_extruder : std::as_const(m_working_virtual_extruders)) {
+        rows.push_back(
+            ColorMixRecipeRow::make_row_data(virtual_extruder, m_physical_colors, m_physical_types)
+        );
+    }
+
+    m_recipe_rows->reset(std::move(rows));
 }
 
 PhysicalExtruderSlots ColorMixDialog::preset_slots() const
@@ -1183,63 +1277,52 @@ PhysicalExtruderSlots ColorMixDialog::preset_slots() const
     for (unsigned int i = 0; i < m_physical_extruder_count; ++i) {
         slots.push_back(
             {i < m_physical_colors.size() ? m_physical_colors.at(i) : std::string{},
-             i < m_physical_types.size() ? m_physical_types.at(i) : std::string{},
-             i >= m_preset_extruders_enabled.size() || m_preset_extruders_enabled.at(i)}
+             i < m_physical_types.size() ? m_physical_types.at(i) : std::string{}}
         );
     }
 
     return slots;
 }
 
-void ColorMixDialog::rebuild_preset_grid()
+void ColorMixDialog::reset_blend_candidates()
 {
-    clear_children_later(m_two_color_presets_wrap);
-    clear_children_later(m_three_color_presets_wrap);
-
     const PhysicalExtruderSlots slots = this->preset_slots();
-    const BlendPresetGroups groups =
-        Biz::Algorithms::VirtualExtruderPresets::build_blend_presets(slots);
+    const BlendPresets candidates =
+        Biz::Algorithms::VirtualExtruderPresets::build_blend_candidates(slots);
 
-    const auto add_preset_button = [this, &slots](Item* wrap, const BlendPreset& preset)
-    {
-        std::string label;
-        std::string tooltip;
-        for (size_t i = 0; i < preset.extruder_ids_1based.size(); ++i) {
-            if (i > 0) {
-                label += '+';
-                tooltip += " + ";
-            }
+    std::vector<BlendTileData> tiles;
+    tiles.reserve(candidates.size());
+    for (size_t i = 0; i < candidates.size(); ++i) {
+        tiles.push_back(make_blend_tile_data(
+            candidates.at(i),
+            slots,
+            i,
+            this->find_matching_blend_index(candidates.at(i)) >= 0
+        ));
+    }
 
-            label += std::to_string(preset.extruder_ids_1based.at(i));
-            tooltip += fmt::format(
-                fmt::runtime(_u8L("Ext {} ({} %)")),
-                preset.extruder_ids_1based.at(i),
-                preset.ratios_percent.at(i)
-            );
+    m_blend_candidates->reset(std::move(tiles));
+
+    this->update_preset_sections_visibility();
+}
+
+void ColorMixDialog::update_blend_usage()
+{
+    const PhysicalExtruderSlots slots = this->preset_slots();
+    for (size_t i = 0; i < m_blend_candidates->size(); ++i) {
+        const BlendTileData& tile = m_blend_candidates->at(i);
+        const bool already_used   = this->find_matching_blend_index(tile.preset) >= 0;
+        if (already_used != tile.already_used) {
+            m_blend_candidates->set(make_blend_tile_data(tile.preset, slots, i, already_used), i);
         }
-
-        const bool used         = this->find_matching_blend_index(preset) >= 0;
-        BlendRecipeTile* button = wrap->emplace_back<BlendRecipeTile>(
-            parse_hex_color(Biz::Algorithms::VirtualExtruderPresets::preset_color(preset, slots)),
-            label,
-            used
-        );
-        button->set_tooltip(
-            used ? _u8L("Already added - click to remove") : _u8L("Click to add: ") + tooltip
-        );
-        button->callbacks().action = [this, preset]() { this->on_preset_clicked(preset); };
-    };
-
-    for (const BlendPreset& preset : groups.two_color) {
-        add_preset_button(m_two_color_presets_wrap, preset);
     }
+}
 
-    for (const BlendPreset& preset : groups.three_color) {
-        add_preset_button(m_three_color_presets_wrap, preset);
-    }
+void ColorMixDialog::update_preset_sections_visibility()
+{
+    const bool has_two   = m_two_color_presets->size() > 0;
+    const bool has_three = m_three_color_presets->size() > 0;
 
-    const bool has_two   = !groups.two_color.empty();
-    const bool has_three = !groups.three_color.empty();
     m_two_color_presets_title->set_visible(has_two);
     m_two_color_presets_wrap->set_visible(has_two);
     m_three_color_presets_title->set_visible(has_three);
@@ -1266,7 +1349,11 @@ void ColorMixDialog::on_preset_clicked(const BlendPreset& preset)
 
     m_working_virtual_extruders.push_back(std::move(virtual_extruder));
 
-    this->rebuild_virtual_extruder_list(-1);
+    m_recipe_rows->append(
+        ColorMixRecipeRow::
+            make_row_data(m_working_virtual_extruders.back(), m_physical_colors, m_physical_types)
+    );
+    this->select_row(-1);
 }
 
 unsigned int ColorMixDialog::next_free_virtual_id() const
@@ -1364,6 +1451,12 @@ int ColorMixDialog::count_objects_using(unsigned int virtual_extruder_id) const
 ImColor ColorMixDialog::physical_color(unsigned int extruder_id_1based) const
 {
     return physical_slot_color(m_physical_colors, extruder_id_1based);
+}
+
+bool ColorMixDialog::is_extruder_enabled(unsigned int extruder_id_1based) const
+{
+    const size_t idx = extruder_id_1based - 1;
+    return idx < m_extruder_filters->size() && m_extruder_filters->at(idx).enabled;
 }
 
 void ColorMixDialog::clear_color_override()

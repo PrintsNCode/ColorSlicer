@@ -116,6 +116,11 @@ void ConfigItemComboBox::on_data_update()
         m_last_item = m_state;
     }
 
+    if (!m_init) {
+        initialize();
+        m_init = true;
+    }
+
     // TODO: the validators gets constantly recreated, clean this up
     if (mixed()) {
         set_override_label(Biz::_u8L("Mixed"));
@@ -134,11 +139,6 @@ void ConfigItemComboBox::on_data_update()
 
 void ConfigItemComboBox::update_value(const Domain::ConfigValue& value)
 {
-    if (!m_init) {
-        initialize();
-        m_init = true;
-    }
-
     std::vector<std::string> items;
     const Domain::ConfigItemDef::GUIType gui_type = m_state->def().gui_type;
     if (gui_type == Domain::ConfigItemDef::GUIType::f_enum_open) {
@@ -178,12 +178,15 @@ void ConfigItemComboBox::initialize()
     if (gui_type == Domain::ConfigItemDef::GUIType::f_enum_open) {
         set_editable(true);
 
-        m_double_validator = std::make_unique<DoubleValidator>();
+        m_double_validator = std::make_unique<DoubleValidator>(
+                m_state->def().min.value_or(std::numeric_limits<double>::lowest()),
+                m_state->def().max.value_or(std::numeric_limits<double>::max())
+        );
         m_double_validator->set_units(m_state->def().units);
         set_validator(m_double_validator.release());
 
         for (const auto& choice : m_state->def().choices) {
-            items.push_back(choice.second);
+            items.push_back(i18n_str(choice.second, i18n_context));
         }
     } else if (gui_type == Domain::ConfigItemDef::GUIType::i_enum_open) {
         set_editable(true);

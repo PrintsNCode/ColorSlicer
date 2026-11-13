@@ -254,6 +254,10 @@ private:
     // Data type for propagate instance progress into frontend
     std::optional<Biz::Slicing::Sla::Object> m_preview;
 
+    // Drops the parts of the preview whose steps are no longer done, so the preview never mixes
+    // fresh and stale data. Returns false if there is no valid preview mesh left.
+    bool drop_invalidated_preview();
+
     auto mesh_to_slice(SLAPrintObjectStep s) const
     {
         auto r = m_mesh_to_slice.equal_range(s);
@@ -319,7 +323,7 @@ public:
     // List of existing PrintObject IDs, to remove notifications for non-existent IDs.
     std::vector<Domain::ObjectID> print_object_ids() const override;
 
-    Biz::Slicing::ApplyStatus::Status update(
+    Biz::Slicing::UpdateResult update(
         Domain::Model& model,
         const Domain::ConfigPack& config,
         const Domain::BedInstance& bed,

@@ -35,10 +35,10 @@ ProjectButton::ProjectButton(
     set_flex_shrink(0);
 
     m_background = emplace_back<Rectangle>();
-    m_background->set_margin(Margins(0, 5, 0, 0));
-    m_background->set_padding(Paddings(30.f, 8.f, 20.f, 12.f));
+    m_background->set_margin(Margins(0, 5_fpx, 0, 0));
+    m_background->set_padding(Paddings(30_fpx, 8_fpx, 20_fpx, 12_fpx));
     m_background->set_rounding(5.f);
-    m_background->set_gap(7.f);
+    m_background->set_gap(7_fpx);
     m_background->set_flags(ImDrawFlags_RoundCornersTop);
     update_bg_color();
 
@@ -48,14 +48,14 @@ ProjectButton::ProjectButton(
     m_label->set_self_align(YGAlignCenter);
 
     m_cross = m_background->emplace_back<LayoutButton>("", Render::Icon::TopBarCross);
-    m_cross->set_width(22);
-    m_cross->set_height(22);
+    m_cross->set_width(22_fpx);
+    m_cross->set_height(22_fpx);
     m_cross->set_self_align(YGAlignCenter);
     m_cross->set_flex_shrink(0);
     m_cross->set_background_color(IM_COL32_BLACK_TRANS);
 
     m_separator_wrap = emplace_back<Item>();
-    m_separator_wrap->set_padding({0.f, 10.f});
+    m_separator_wrap->set_padding({0.f, 10_fpx});
     m_separator_wrap->emplace_back<Separator>(Orientation::Vertical)
         ->set_fill(m_theme->color_imgui(Platform::Color::SceneBgTop));
 
@@ -102,7 +102,7 @@ void ProjectButton::on_data_update()
     std::string btn_label;
     std::string btn_tooltip;
     if (proj_path.empty()) {
-        std::string new_project = _u8L("New Project");
+        std::string new_project = _u8L("New project");
         if (*m_state) {
             new_project += fmt::format(" ({})", *m_state);
         }

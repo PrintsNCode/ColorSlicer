@@ -1,16 +1,31 @@
 #pragma once
 
+#include <optional>
+#include <string>
+
 #include "Slic3r/Biz/ProjectScoped.hpp"
 #include "Slic3r/Biz/ISelectedProjectChangedListener.hpp"
 
 #include "Slic3r/App/IAppConfigChangedListener.hpp"
 #include "Slic3r/App/ModalDialog.hpp"
+#include "Slic3r/App/IMsgBoxProvider.hpp"
+
+#include <optional>
+#include <vector>
 
 namespace Slic3r::Biz {
 class ProjectInteractor;
 } // namespace Slic3r::Biz
 
+namespace Slic3r::Biz::FileOpen {
+struct ArchiveFile;
+struct ArchiveSelection;
+struct OpenFilesOptions;
+} // namespace Slic3r::Biz::FileOpen
+
 namespace Slic3r::App {
+
+class RenderModuleBase;
 
 namespace Plater {
 class PlaterRenderModule;
@@ -37,7 +52,10 @@ enum class ModuleType
 };
 } // namespace Render
 
-class Navigator : public Biz::ISelectedProjectChangedListener, public IAppConfigChangedListener
+class Navigator :
+    public Biz::ISelectedProjectChangedListener,
+    public IAppConfigChangedListener,
+    public IMsgBoxProvider
 {
 public:
     ~Navigator();
@@ -65,6 +83,8 @@ public:
         Biz::ProjectInteractor* project_interactor
     );
 
+    void shutdown();
+
     void navigate_to_module_type(Render::ModuleType type);
 
     void on_selected_project_changed(size_t index) override;
@@ -75,7 +95,7 @@ public:
 
     void request_search();
 
-    void open_invalid_data_dialog();
+    void open_effective_values_dialog(std::optional<std::string> key);
 
     void set_modal_dialog(ModalDialog dialog);
     ModalDialog current_modal_dialog() const;
@@ -83,6 +103,54 @@ public:
 
     bool object_list_collapsed() const;
     void set_object_list_collapsed(bool collapsed);
+
+    void pick_color(
+        const std::string& title,
+        const Domain::ColorRGB& input_color = Domain::ColorRGB{0.f, 0.f, 0.f},
+        FnColorPicked fn_color_picked       = nullptr,
+        FnCancelled fn_cancelled            = nullptr,
+        DialogButtons buttons               = AcceptCancelButtons
+    ) override;
+
+    void input_text(
+        const std::string& title,
+        const std::string& text,
+        const std::string& input_text   = std::string{},
+        FnAcceptedText fn_accepted_text = nullptr,
+        FnCancelled fn_cancelled        = nullptr,
+        DialogButtons buttons           = AcceptCancelButtons,
+        bool multiline                  = false
+    ) override;
+
+    void yes_no_cancel(
+        const std::string& title,
+        const std::string& text,
+        FnAccepted fn_accepted   = nullptr,
+        FnRejected fn_rejected   = nullptr,
+        FnCancelled fn_cancelled = nullptr,
+        DialogButtons buttons    = AcceptRejectCancelButtons
+    ) override;
+
+    void input_number(
+        const std::string& title,
+        const std::string& text,
+        const std::string& prompt,
+        int value,
+        int min,
+        int max,
+        FnAcceptedNumber fn_accepted_number = nullptr,
+        FnCancelled fn_cancelled            = nullptr,
+        DialogButtons buttons               = AcceptCancelButtons
+    ) override;
+
+    /**
+     * @return false when another modal dialog is opened, the dialog is not shown then.
+     */
+    bool confirm_open_files(
+        std::vector<Biz::FileOpen::ArchiveFile> files,
+        Biz::FileOpen::OpenFilesOptions options,
+        std::function<void(std::optional<Biz::FileOpen::ArchiveSelection>)> done
+    );
 
     bool has_fullscreen() const;
     bool is_fullscreen() const;
@@ -93,6 +161,8 @@ public:
 
 private:
     void set_render_module_type(Render::ModuleType type);
+
+    RenderModuleBase* current_render_module();
 
 private:
     struct ProjectContext

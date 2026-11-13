@@ -4,10 +4,12 @@
 #include "Slic3r/Biz/ObservableList.hpp"
 #include "Slic3r/Biz/PresetUpdater/IPresetUpdaterResultListener.hpp"
 #include "Slic3r/Biz/PresetUpdater/PresetUpdaterInteractor.hpp"
+#include "Slic3r/Biz/PresetUpdater/PresetUpdaterReason.hpp"
 #include "Slic3r/Semver.hpp"
 
 #include <boost/filesystem/path.hpp>
 
+#include <chrono>
 #include <cstdint>
 #include <functional>
 #include <map>
@@ -67,7 +69,7 @@ struct VendorRowState
     Slic3r::Semver recommended_version;
 
     InstallState install_state{InstallState::Idle};
-    std::string error_text;
+    std::optional<Biz::PresetUpdater::PresetUpdaterReason> failure_reason;
 
     bool install_locked{false};
     bool skipped{false};
@@ -150,7 +152,8 @@ enum class JobKind
     Install,
     RemoveVendor,
     AddSource,
-    RemoveSource
+    RemoveSource,
+    AcknowledgeNewVendors
 };
 
 /**
@@ -300,6 +303,51 @@ private:
     uint64_t m_generation{0};
     bool m_armed{false};
     bool m_dirty{false};
+    bool m_running{false};
+};
+
+// ---------------------------------------------------------------------------------------------
+// Periodic check
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * @brief Repeats the background check for as long as it is wanted.
+ *
+ * Owns the whole schedule: the next tick is armed before the current one is delivered, so a tick
+ * the controller decides to skip does not stop the one after it from coming. A queued timer holds
+ * a weak reference and is recognised as stale by its generation, so the schedule may be stopped,
+ * or destroyed, while a timer is still on its way.
+ */
+class PeriodicCheckTimer
+{
+public:
+    using TickFn = std::function<void()>;
+
+    PeriodicCheckTimer(
+        Biz::Platform::TimerQueue& timer_queue, std::chrono::milliseconds interval, TickFn tick
+    );
+    ~PeriodicCheckTimer();
+
+    PeriodicCheckTimer(const PeriodicCheckTimer&)            = delete;
+    PeriodicCheckTimer& operator=(const PeriodicCheckTimer&) = delete;
+
+    /// Arms the schedule. @return false when it was already ticking, so nothing has changed.
+    bool start();
+
+    /// Delivers no further tick. One already on its way is ignored when it arrives.
+    void stop();
+
+    bool running() const;
+
+private:
+    void arm();
+
+    Biz::Platform::TimerQueue& m_timer_queue;
+    std::chrono::milliseconds m_interval;
+    TickFn m_tick;
+
+    std::shared_ptr<int> m_life{std::make_shared<int>(0)};
+    uint64_t m_generation{0};
     bool m_running{false};
 };
 
@@ -456,7 +504,7 @@ public:
     /// Marks what the job in flight is doing, so a finished or retried row reads as a deletion.
     void set_removing(const std::vector<VendorKey>& keys);
 
-    void set_install_failed(const VendorKey& key, const std::string& error_text);
+    void set_install_failed(const VendorKey& key, Biz::PresetUpdater::PresetUpdaterReason reason);
 
     void set_install_done(const VendorKey& key);
 
@@ -496,7 +544,7 @@ private:
         bool removing{false};
 
         InstallState install_state{InstallState::Idle};
-        std::string error_text;
+        std::optional<Biz::PresetUpdater::PresetUpdaterReason> failure_reason;
     };
 
     struct SourceEntry
@@ -626,6 +674,8 @@ struct ControllerEnvironment
     std::function<bool()> online_allowed;
     /// The application draws on demand, so a change made outside a frame has to ask for one.
     std::function<void()> request_render;
+    /// How long between two background checks. The application asks for six hours.
+    std::chrono::milliseconds periodic_check_interval{std::chrono::hours{6}};
 };
 
 /**
@@ -683,6 +733,33 @@ public:
 
     /// Starts the check for updates. Reports what it finds, never that it is running.
     void start_background_check();
+
+    /**
+     * @brief The application's answer to whether the preset updater may work online has changed.
+     *
+     * Starts or stops the repeating background check, and checks at once when it has just been
+     * switched on, so whoever switched it on is not left waiting a whole interval for an answer.
+     * Switching it off checks again from what the installation carries, so nothing offered
+     * still needs a download - once the sources being listed or selected have settled, and
+     * unless an install is running, as that job still carries the old setting.
+     */
+    void on_online_allowed_changed();
+
+    /**
+     * @brief A user has logged in, so the server may list sources it withheld until now.
+     *
+     * Checks at once. A check already running is superseded, as it may have been asked without
+     * the account. Announced only when the check finds an offer the user has not been shown.
+     */
+    void on_logged_in();
+
+    /**
+     * @brief The user has logged out, so sources only they could read now offer nothing.
+     *
+     * Checks at once, so what those sources staged is dropped without waiting for the
+     * periodic check. Never announced: logging out can only take offers away.
+     */
+    void on_logged_out();
 
     void set_show_dialog_callback(std::function<void()> callback);
     void set_presets_installed_callback(std::function<void()> callback);
@@ -758,9 +835,7 @@ public:
     ) override;
     void on_preset_updater_status(
         JobId job_id,
-        const std::string& target,
-        int attempt,
-        unsigned delay,
+        const Biz::PresetUpdater::PresetUpdaterProgress& progress,
         Biz::PresetUpdater::VerboseStyle verbose
     ) override;
     void on_preset_updater_repository_info_vector(
@@ -802,6 +877,20 @@ private:
         Reported
     };
 
+    /**
+     * @brief What a finished check may say through the updates-available notification.
+     *
+     * Always re-announces whatever is pending. OnChange announces only an offer that was not
+     * part of the last announcement, so a check that merely confirms what the user has already
+     * seen stays quiet. Nothing never announces, for a check that can only take offers away.
+     */
+    enum class CheckAnnouncement
+    {
+        Always,
+        OnChange,
+        Nothing
+    };
+
     /// Publishes and notifies once, however many changes were made inside it, however nested.
     class Transaction
     {
@@ -819,11 +908,17 @@ private:
     JobId submit(JobKind kind, const std::function<JobId()>& operation, std::string subject = {});
 
     void start_listing();
-    void start_check(Biz::PresetUpdater::SourceListSync source_list, CheckReporting reporting);
+    void start_check(
+        Biz::PresetUpdater::SourceListSync source_list,
+        CheckReporting reporting,
+        CheckAnnouncement announcement = CheckAnnouncement::Always
+    );
     void start_install(const std::vector<VendorKey>& keys);
     void commit_selection();
 
     void cancel_check();
+
+    void recheck_sources_silently(CheckAnnouncement announcement);
 
     SourceStore::Locks current_locks() const;
 
@@ -835,6 +930,20 @@ private:
     void notify_forced_state(bool has_forced);
     void show_dialog();
 
+    void on_periodic_check_due();
+
+    void check_offline_once_sources_settle();
+
+    bool sources_changing() const;
+
+    /// Whether a check nobody asked for may start now without getting in the way of one that was.
+    bool may_check_in_background() const;
+
+    /// Records the new vendors of a check the user has just been shown, so they are announced once.
+    void acknowledge_new_vendors(
+        const Biz::PresetUpdater::PresetUpdaterReconfigurationList& reconfigurations
+    );
+
     Biz::PresetUpdater::PresetUpdaterInteractor& m_interactor;
     ControllerEnvironment m_environment;
     PresetUpdaterActivityReporter m_activity_reporter;
@@ -843,6 +952,7 @@ private:
     JobLedger m_ledger;
     ForcedReconfigurations m_forced;
     std::optional<SelectionCommitter> m_committer;
+    std::optional<PeriodicCheckTimer> m_periodic;
 
     std::vector<Biz::PresetUpdater::PresetUpdaterWarning> m_warnings;
     bool m_operation_failed{false};
@@ -855,6 +965,12 @@ private:
     size_t m_transaction_depth{0};
     std::optional<Snapshot> m_published;
     bool m_shut_down{false};
+    bool m_offline_check_pending{false};
+
+    /// What the newest check may announce. A superseding check brings its own answer.
+    CheckAnnouncement m_check_announcement{CheckAnnouncement::Always};
+    /// The offers of the last announcement, which is what OnChange measures change against.
+    std::set<std::string> m_announced_offers;
 };
 
 } // namespace Slic3r::App::PresetUpdater
