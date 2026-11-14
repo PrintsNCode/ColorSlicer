@@ -83,6 +83,11 @@ endif()
 if (APPLE AND CMAKE_BUILD_TYPE STREQUAL "Release" AND SLIC3R_RELEASE_DEBUG_SYMBOLS)
     set(CMAKE_CXX_FLAGS ${CMAKE_CXX_FLAGS} -g)
 endif ()
+if (APPLE)
+    # ColorSlicer: the libc++ of Xcode 27.2 rejects the forward declarations of standard
+    # containers in range-v3 (meta/meta.hpp); the library provides this switch to skip them.
+    add_compile_definitions(META_NO_STD_FORWARD_DECLARATIONS)
+endif ()
 if (SLIC3R_STATIC)
     # Prefer config scripts over find modules. This is helpful when building with
     # the static dependencies. Many libraries have their own export scripts
