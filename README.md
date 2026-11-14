@@ -138,14 +138,23 @@ To translate another option, add one line to `translate()` in `ForeignPrint.cpp`
 ## Building
 
 Follow [`doc/Build.md`](doc/Build.md) (build the dependencies first), configuring with
-`-DSLIC3R_BUILD_TESTS=ON`. Tested on macOS (Apple Silicon) with CMake 3.27.
+`-DSLIC3R_BUILD_TESTS=ON`. Tested on macOS 27 (Apple Silicon) with Xcode 27.2 and CMake 3.27
+(CMake 4.x fails on this tree).
 
 ```bash
+cmake -S deps -B deps/build -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0
+cmake --build deps/build -j4
+cmake -S . -B build -DCMAKE_PREFIX_PATH="$PWD/deps/build/destdir/usr/local" \
+  -DCMAKE_OSX_SYSROOT="$(xcrun --show-sdk-path)" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0 -DSLIC3R_BUILD_TESTS=ON
 cmake --build build -j4
 ./build/src/slic3r-app-launcher/slic3r-app-launcher --datadir ~/colorslicer-data
 ```
 
 `--datadir` keeps the test configuration apart from an existing PrusaSlicer installation.
+
+**After an Xcode update** the build folders keep the path of the old SDK (`MacOSX27.0.sdk/usr/include`
+"non-existent path"). Keep `deps/build/downloads`, delete the rest of `deps/build` and `build`, and run the
+commands above again.
 
 **Windows:** step by step from a PC with nothing installed in [README-Windows.md](README-Windows.md); the
 workflow [`colorslicer_windows.yml`](.github/workflows/colorslicer_windows.yml) builds the portable .zip on GitHub.
