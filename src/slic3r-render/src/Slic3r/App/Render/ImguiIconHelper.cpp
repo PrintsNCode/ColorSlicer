@@ -114,6 +114,9 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
     {Icon::TobBarShowUI, "tb_show_ui"},
     {Icon::TobBarPlus, "plus_new"},
     {Icon::TopBarCross, "cross_new"},
+    {Icon::Pin, "pin"},
+    {Icon::ArrowsDiagonal, "arrows_diagonal"},
+    {Icon::DotsTriangle, "dots_triangle"},
 
     // Gizmo Paint-On-Supports
     {Icon::Circle, "circle"},
@@ -175,6 +178,10 @@ static const std::unordered_map<Icon, const char*> ICON_FILENAMES = {
     {Icon::Reload, "refresh"},
     {Icon::ReflectionX, "reflection_x"},
     {Icon::ReflectionY, "reflection_y"},
+
+    {Icon::MirrorX, "mirror_x"},
+    {Icon::MirrorY, "mirror_y"},
+    {Icon::MirrorZ, "mirror_z"},
 
     {Icon::Layers, "layers"},
     {Icon::WallsPerimeters, "walls_and_perimeters"},

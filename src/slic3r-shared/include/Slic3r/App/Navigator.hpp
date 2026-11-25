@@ -41,6 +41,7 @@ class AbstractRenderCanvas;
 
 namespace Yoga {
 class Dialog;
+class RootItem;
 } // namespace Yoga
 
 namespace Render {
@@ -76,6 +77,8 @@ public:
     /// False between set_canvas and on_init, while the app runs without the plater and preview.
     bool has_modules() const;
 
+    Yoga::RootItem* current_root_item();
+
     void on_init(
         Plater::PlaterRenderModule& plater_module,
         Preview::PreviewRenderModule& preview_module,
@@ -86,6 +89,12 @@ public:
     void shutdown();
 
     void navigate_to_module_type(Render::ModuleType type);
+
+    /**
+     * @brief Navigates to the module type, unlike navigate_to_module_type() it keeps the opened
+     * dialog when the module type is already selected.
+     */
+    void ensure_module_type(Render::ModuleType type);
 
     void on_selected_project_changed(size_t index) override;
 

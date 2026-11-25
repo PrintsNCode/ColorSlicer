@@ -450,6 +450,7 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/ThumbnailStoreUpdater.cpp
         
         include/Slic3r/App/Browser/BrowserLogicCommand.hpp
+        include/Slic3r/App/Browser/BrowserCookie.hpp
         include/Slic3r/App/Browser/AbstractBrowserLogicCommandHandler.hpp
         include/Slic3r/App/Browser/AbstractBrowserLogic.hpp
         include/Slic3r/App/Browser/AbstractUploadBrowserLogic.hpp
@@ -459,12 +460,27 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Browser/BrowserLogicConnectSelect.cpp
         include/Slic3r/App/Browser/AbstractConnectRequestHandler.hpp
         src/Slic3r/App/Browser/AbstractConnectRequestHandler.cpp
+        src/Slic3r/App/Browser/BrowserCookie.cpp
+        include/Slic3r/App/Browser/ConnectPageAuth.hpp
+        src/Slic3r/App/Browser/ConnectPageAuth.cpp
+        include/Slic3r/App/Browser/ConnectNavigationLock.hpp
+        src/Slic3r/App/Browser/ConnectNavigationLock.cpp
+        include/Slic3r/App/Browser/AbstractConnectPageLogic.hpp
+        src/Slic3r/App/Browser/AbstractConnectPageLogic.cpp
         include/Slic3r/App/Browser/BrowserLogicConnectPage.hpp
         src/Slic3r/App/Browser/BrowserLogicConnectPage.cpp
+        include/Slic3r/App/Browser/BrowserLogicConnectLocalPage.hpp
+        src/Slic3r/App/Browser/BrowserLogicConnectLocalPage.cpp
+        include/Slic3r/App/Browser/ConnectServiceSwitch.hpp
+        src/Slic3r/App/Browser/ConnectServiceSwitch.cpp
         include/Slic3r/App/Browser/BrowserLogicPrintables.hpp
         src/Slic3r/App/Browser/BrowserLogicPrintables.cpp
         include/Slic3r/App/Browser/BrowserLogicLogInRedirect.hpp
         src/Slic3r/App/Browser/BrowserLogicLogInRedirect.cpp
+        include/Slic3r/App/Browser/BrowserLogicConnectLocalLogIn.hpp
+        src/Slic3r/App/Browser/BrowserLogicConnectLocalLogIn.cpp
+        include/Slic3r/App/Browser/ConnectLocalSetupLogic.hpp
+        src/Slic3r/App/Browser/ConnectLocalSetupLogic.cpp
         include/Slic3r/App/Browser/BrowserLogicPrintablesToConnect.hpp
         src/Slic3r/App/Browser/BrowserLogicPrintablesToConnect.cpp
         include/Slic3r/App/Browser/BrowserLogicPhysicalPrinter.hpp
@@ -596,6 +612,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Wildcards.cpp
 
         include/Slic3r/Biz/IMessageDialogProvider.hpp
+        include/Slic3r/Biz/MainThreadDialogProvider.hpp
+        src/Slic3r/Biz/MainThreadDialogProvider.cpp
 
         src/Slic3r/Biz/I18N/LanguageInfo.cpp
         include/Slic3r/Biz/I18N/LanguageInfo.hpp
@@ -647,6 +665,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/App/Yoga/Icon.hpp
         src/Slic3r/App/Yoga/Icon.cpp
         src/Slic3r/App/Yoga/Text.cpp
+        include/Slic3r/App/Yoga/DialogGeometry.hpp
         include/Slic3r/App/Yoga/Dialog.hpp
         src/Slic3r/App/Yoga/Dialog.cpp
         src/Slic3r/App/Yoga/Separator.cpp
@@ -700,6 +719,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/Yoga/ItemEvents.cpp
         include/Slic3r/App/Yoga/RootItem.hpp
         src/Slic3r/App/Yoga/RootItem.cpp
+        include/Slic3r/App/Yoga/TreeDump.hpp
+        src/Slic3r/App/Yoga/TreeDump.cpp
         include/Slic3r/App/Yoga/StackLayout.hpp
         src/Slic3r/App/Yoga/StackLayout.cpp
         include/Slic3r/App/Yoga/Popup.hpp
@@ -794,6 +815,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/CommandBindingManager.cpp
         include/Slic3r/App/CrashedProjectsDialog.hpp
         src/Slic3r/App/CrashedProjectsDialog.cpp
+        include/Slic3r/App/LoadingProgressDialog.hpp
+        src/Slic3r/App/LoadingProgressDialog.cpp
         include/Slic3r/App/ProjectSaver.hpp
         src/Slic3r/App/ProjectSaver.cpp
         include/Slic3r/App/ModalDialog.hpp
@@ -850,6 +873,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/OverridableConfigBoxObservableList.cpp
         include/Slic3r/Biz/OverridableConfigBoxInteractor.hpp
         src/Slic3r/Biz/OverridableConfigBoxInteractor.cpp
+        include/Slic3r/Biz/JsonForScript.hpp
+        include/Slic3r/Biz/Lifetime.hpp
         include/Slic3r/Biz/MiniZErrorTranslation.hpp
         src/Slic3r/Biz/MiniZErrorTranslation.cpp
 
@@ -899,6 +924,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/Preset/IPrinterPresetSelectorListener.hpp
         include/Slic3r/Biz/Preset/PresetSelectionNames.hpp
         include/Slic3r/Biz/Preset/PresetDiffOperation.hpp
+        include/Slic3r/Biz/Preset/PreferredMaterialTypes.hpp
         include/Slic3r/Biz/Preset/IPresetDialogManager.hpp
         include/Slic3r/Biz/Preset/NameValidator.hpp
         src/Slic3r/Biz/Preset/NameValidator.cpp
@@ -937,6 +963,7 @@ set(SLIC3R_SHARED_FILES
 
         include/Slic3r/Biz/PrintModeInteractor.hpp
         src/Slic3r/Biz/PrintModeInteractor.cpp
+        include/Slic3r/Biz/Preset/PresetEvalException.hpp
         include/Slic3r/Biz/Preset/PresetEvaluator.hpp
         src/Slic3r/Biz/Preset/PresetEvaluator.cpp
         src/Slic3r/Biz/Preset/PresetCollectionEvaluator.hpp
@@ -960,6 +987,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/ObjectList/InstanceObservableList.cpp
         include/Slic3r/Biz/ObjectList/ObjectListInteractor.hpp
         src/Slic3r/Biz/ObjectList/ObjectListInteractor.cpp
+        include/Slic3r/Biz/ObjectList/ObjectListSelection.hpp
+        src/Slic3r/Biz/ObjectList/ObjectListSelection.cpp
 
         include/Slic3r/Biz/Expr/Parser.hpp
         src/Slic3r/Biz/Expr/Parser.cpp
@@ -1028,6 +1057,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/PrintHost/PrintHostPrusaLink.hpp
         include/Slic3r/Biz/PrintHost/PrintHostPrusaLinkStorage.hpp
         include/Slic3r/Biz/PrintHost/PrintHostPrusaConnect.hpp
+        include/Slic3r/Biz/PrintHost/PrintHostPrusaConnectLocal.hpp
         include/Slic3r/Biz/PrintHost/PrintHostSL1Host.hpp
         include/Slic3r/Biz/PrintHost/PrintHostMoonraker.hpp
         include/Slic3r/Biz/PrintHost/PrintHostDuet.hpp
@@ -1044,6 +1074,7 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/PrintHost/PrintHostPrusaLink.cpp
         src/Slic3r/Biz/PrintHost/PrintHostPrusaLinkStorage.cpp
         src/Slic3r/Biz/PrintHost/PrintHostPrusaConnect.cpp
+        src/Slic3r/Biz/PrintHost/PrintHostPrusaConnectLocal.cpp
         src/Slic3r/Biz/PrintHost/PrintHostSL1Host.cpp
         src/Slic3r/Biz/PrintHost/PrintHostMoonraker.cpp
         src/Slic3r/Biz/PrintHost/PrintHostDuet.cpp
@@ -1078,9 +1109,16 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/Network/IHttp.hpp
         include/Slic3r/Biz/Network/HttpFactory.hpp
         include/Slic3r/Biz/Network/HttpCurl.hpp
+        include/Slic3r/Biz/ConnectLocal/ConnectLocalDiscovery.hpp
+        src/Slic3r/Biz/ConnectLocal/ConnectLocalDiscovery.cpp
         include/Slic3r/Biz/Network/Bonjour.hpp
         include/Slic3r/Biz/Network/TCPConsole.hpp
         include/Slic3r/Biz/Network/ServiceConfig.hpp
+        include/Slic3r/Biz/Network/ServerTrust.hpp
+        include/Slic3r/Biz/Network/ServerTrustProbe.hpp
+        include/Slic3r/Biz/Network/ServerTrustStore.hpp
+        include/Slic3r/Biz/Network/Tls.hpp
+        include/Slic3r/Biz/Network/Url.hpp
         include/Slic3r/Biz/Network/Jwt.hpp
         include/Slic3r/Biz/Network/MqttSubscriber.hpp
         src/Slic3r/Biz/Network/IHttp.cpp
@@ -1088,6 +1126,11 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/Network/Bonjour.cpp
         src/Slic3r/Biz/Network/TCPConsole.cpp
         src/Slic3r/Biz/Network/ServiceConfig.cpp
+        src/Slic3r/Biz/Network/ServerTrust.cpp
+        src/Slic3r/Biz/Network/ServerTrustProbe.cpp
+        src/Slic3r/Biz/Network/ServerTrustStore.cpp
+        src/Slic3r/Biz/Network/Tls.cpp
+        src/Slic3r/Biz/Network/Url.cpp
         src/Slic3r/Biz/Network/Jwt.cpp
         src/Slic3r/Biz/Network/HttpCurlFactory.cpp
         src/Slic3r/Biz/Network/MqttSubscriber.cpp
@@ -1100,17 +1143,22 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/SLAObjectRequest.cpp
 
         include/Slic3r/Biz/UserAccount/IUserAccountListener.hpp
+        include/Slic3r/Biz/UserAccount/IPairingCommunication.hpp
         include/Slic3r/Biz/UserAccount/IUserAccountSessionListener.hpp
         include/Slic3r/Biz/UserAccount/IUserAccountActionCallbacks.hpp
         include/Slic3r/Biz/UserAccount/UserAccountInteractor.hpp
         include/Slic3r/Biz/UserAccount/IUserAccountCommunication.hpp
         include/Slic3r/Biz/UserAccount/UserAccountCommunication.hpp
         include/Slic3r/Biz/UserAccount/UserAccountCommunicationDummy.hpp
+        include/Slic3r/Biz/UserAccount/UserAccountCommunicationPairing.hpp
+        include/Slic3r/Biz/UserAccount/UserAccountPairing.hpp
+        include/Slic3r/Biz/UserAccount/UserAccountBackgroundWorker.hpp
         include/Slic3r/Biz/UserAccount/UserAccountSession.hpp
         include/Slic3r/Biz/UserAccount/UserAccountSessionDispatchBase.hpp
         include/Slic3r/Biz/UserAccount/UserAccountAction.hpp
         include/Slic3r/Biz/UserAccount/UserAccountActionStore.hpp
         include/Slic3r/Biz/UserAccount/UserAccountActionData.hpp
+        include/Slic3r/Biz/UserAccount/UserAccountCommunicationBase.hpp
         include/Slic3r/Biz/UserAccount/UserAccountCommunicationTokenBase.hpp
         include/Slic3r/Biz/UserAccount/UserAccountTokenStore.hpp
         include/Slic3r/Biz/UserAccount/UserAccountTokenLog.hpp
@@ -1118,9 +1166,12 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/UserAccount/ConnectUtils.hpp
         src/Slic3r/Biz/UserAccount/UserAccountInteractor.cpp
         src/Slic3r/Biz/UserAccount/UserAccountCommunication.cpp
+        src/Slic3r/Biz/UserAccount/UserAccountCommunicationPairing.cpp
+        src/Slic3r/Biz/UserAccount/UserAccountPairing.cpp
         src/Slic3r/Biz/UserAccount/UserAccountSession.cpp
         src/Slic3r/Biz/UserAccount/UserAccountSessionDispatchBase.cpp
         src/Slic3r/Biz/UserAccount/UserAccountAction.cpp
+        src/Slic3r/Biz/UserAccount/UserAccountCommunicationBase.cpp
         src/Slic3r/Biz/UserAccount/UserAccountCommunicationTokenBase.cpp
         src/Slic3r/Biz/UserAccount/UserAccountTokenStore.cpp
         src/Slic3r/Biz/UserAccount/UserAccountCodeChallengeGenerator.cpp
@@ -1134,6 +1185,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/Biz/ConnectPrinter/ConnectPrinter.cpp
         include/Slic3r/Biz/ConnectPrinter/ConnectPrinterService.hpp
         src/Slic3r/Biz/ConnectPrinter/ConnectPrinterService.cpp
+        include/Slic3r/Biz/ConnectPrinter/ConnectPrinterUpdates.hpp
+        src/Slic3r/Biz/ConnectPrinter/ConnectPrinterUpdates.cpp
         include/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterials.hpp
         src/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterials.cpp
         include/Slic3r/Biz/ConnectPrinter/ConnectFavoriteMaterialService.hpp
@@ -1212,6 +1265,7 @@ set(SLIC3R_SHARED_FILES
         include/Slic3r/Biz/FileLoadingLogic.hpp
         src/Slic3r/Biz/FileLoadingLogic.cpp
         include/Slic3r/Biz/FileOpen/ArchiveEntry.hpp
+        include/Slic3r/Biz/FileOpen/FileLoadJob.hpp
         include/Slic3r/Biz/FileOpen/FileOpeningInteractor.hpp
         src/Slic3r/Biz/FileOpen/FileOpeningInteractor.cpp
         include/Slic3r/Biz/MeshExportLogic.hpp
@@ -1275,6 +1329,12 @@ set(SLIC3R_SHARED_FILES
 
         include/Slic3r/App/AppConfig.hpp
         src/Slic3r/App/AppConfig.cpp
+        include/Slic3r/App/ConnectLocalTrust.hpp
+        src/Slic3r/App/ConnectLocalTrust.cpp
+        include/Slic3r/App/ConnectServiceName.hpp
+        src/Slic3r/App/ConnectServiceName.cpp
+        include/Slic3r/App/AccountServiceSwitcher.hpp
+        src/Slic3r/App/AccountServiceSwitcher.cpp
         include/Slic3r/App/AppConfigInteractor.hpp
         src/Slic3r/App/AppConfigInteractor.cpp
         include/Slic3r/App/IAppConfigChangedListener.hpp
@@ -1399,6 +1459,8 @@ set(SLIC3R_SHARED_FILES
         src/Slic3r/App/ObjectList/VolumeItem.cpp
         include/Slic3r/App/ObjectList/InstanceItem.hpp
         src/Slic3r/App/ObjectList/InstanceItem.cpp
+        include/Slic3r/App/ObjectList/BedSlicedInfo.hpp
+        src/Slic3r/App/ObjectList/BedSlicedInfo.cpp
 
         include/Slic3r/Biz/MatDb/MatDbClient.hpp
         src/Slic3r/Biz/MatDb/MatDbClient.cpp
@@ -1482,6 +1544,9 @@ find_package(nlohmann_json 3.11 REQUIRED)
 find_package(EXPAT CONFIG REQUIRED)
 find_package(pugixml CONFIG REQUIRED)
 find_package(PahoMqttCpp REQUIRED)
+# libcrypto parses and verifies the X.509 certificates of the Connect Local server for the web
+# views (Biz/Network/Tls.cpp). The deps build OpenSSL on every platform (Paho MQTT needs it too).
+find_package(OpenSSL REQUIRED)
 
 if (APPLE)
     set(USE_NATIVE_MENU_DEFINE "-DUSE_NATIVE_MENU")
@@ -1529,10 +1594,9 @@ endif ()
 
 
 find_package(magic_enum REQUIRED)
-find_package(range-v3 REQUIRED)
 find_package(libdeflate CONFIG REQUIRED)
 
-slic3r_remap_configs("pugixml::static;yoga::yogacore;${YAML_LIB}" RelWithDebInfo Release)
+slic3r_remap_configs("pugixml::static;yoga::yogacore;PahoMqttCpp::paho-mqttpp3-static;${YAML_LIB}" RelWithDebInfo Release)
 
 add_library(slic3r-shared STATIC ${SLIC3R_SHARED_FILES})
 
@@ -1567,6 +1631,7 @@ target_link_libraries(slic3r-shared PUBLIC
         libcereal
         libdeflate::libdeflate_static
         PahoMqttCpp::paho-mqttpp3-static
+        OpenSSL::Crypto
 )
 target_compile_definitions(slic3r-shared PUBLIC ${SLIC3R_YAML_DEFINE} ${USE_NATIVE_MENU_DEFINE})
 if (SLIC3R_SENTRY_DSN)
@@ -1677,13 +1742,21 @@ if(SLIC3R_BUILD_TESTS)
     add_executable(slic3r-shared-tests
             test/main.cpp
 
+            test/Slic3r/App/AppConfigTests.cpp
+            test/Slic3r/App/AccountServiceSwitcherTests.cpp
             test/Slic3r/App/DialogNavigationTests.cpp
+            test/Slic3r/App/LoadingProgressDialogTests.cpp
+            test/Slic3r/App/AppSettingsAdvancedTests.cpp
+            test/Slic3r/App/Browser/BrowserCookieTests.cpp
+            test/Slic3r/App/Browser/ConnectPageAuthTests.cpp
+            test/Slic3r/App/Browser/ConnectNavigationLockTests.cpp
             test/Slic3r/App/OpenFiles/OpenFilesDialogModelTests.cpp
 
             test/Slic3r/App/Lua/PluginBundleTests.cpp
             test/Slic3r/App/Lua/MarketplaceClientTests.cpp
 
             test/Slic3r/App/Config/CategoryUtilsTests.cpp
+            test/Slic3r/App/Config/ConfigItemComboBoxTests.cpp
 
             test/Slic3r/App/Undo/ToolStateSerializeTests.cpp
 
@@ -1714,18 +1787,27 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/App/Yoga/SegmentedControlTests.cpp
             test/Slic3r/App/Yoga/SplitLayoutTests.cpp
             test/Slic3r/App/Yoga/ScrollAreaTests.cpp
+            test/Slic3r/App/Yoga/SliderTests.cpp
             test/Slic3r/App/Yoga/PopupTests.cpp
+            test/Slic3r/App/Yoga/DialogTests.cpp
             test/Slic3r/App/Yoga/ObjectTests.cpp
             test/Slic3r/App/Yoga/EventTests.cpp
             test/Slic3r/App/Yoga/ComboBoxTests.cpp
             test/Slic3r/App/Yoga/ComboBoxListViewTests.cpp
             test/Slic3r/App/Yoga/ComboBoxListViewSelectionTests.cpp
+            test/Slic3r/App/Yoga/RenderInfoTests.cpp
+            test/Slic3r/App/Yoga/TreeDumpTests.cpp
 
             test/Slic3r/Biz/ProjectInteractorTests.cpp
             test/Slic3r/Biz/ExportGcodeTests.cpp
+            test/Slic3r/Biz/PrintHost/PrintHostPrusaConnectTests.cpp
+            test/Slic3r/Biz/PrintHost/PrintHostPrusaConnectLocalTests.cpp
+            test/Slic3r/Biz/ConnectPrinter/ConnectPrinterTests.cpp
+            test/Slic3r/Biz/UserAccount/ConnectUtilsTests.cpp
             test/Slic3r/Biz/Scene/SceneInteractorTests.cpp
             test/Slic3r/Biz/SlaPointsOperationsTests.cpp
             test/Slic3r/Biz/Scene/VirtualBedPreviewTests.cpp
+            test/Slic3r/Biz/ObjectList/ObjectListSelectionTests.cpp
             test/Slic3r/Biz/WeakerPointerTests.cpp
             test/Slic3r/Biz/FileDownloader/FileDownloaderJobTests.cpp
             test/Slic3r/Biz/ObservableListSortFilterTests.cpp
@@ -1733,7 +1815,9 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/ObservableListSearcherTests.cpp
 
         test/Slic3r/TestUtils/AppInstanceMessageHandlerScope.hpp
+        test/Slic3r/TestUtils/DispatchUtils.hpp
         test/Slic3r/TestUtils/JobManagerScope.hpp
+        test/Slic3r/TestUtils/MemorySecretStore.hpp
         test/Slic3r/TestUtils/ScopedThreadDispatcher.hpp
 
             test/Slic3r/Biz/Expr/ParserTests.cpp
@@ -1793,8 +1877,17 @@ if(SLIC3R_BUILD_TESTS)
             test/Slic3r/Biz/FileOpen/ArchiveTestUtils.hpp
             test/Slic3r/Biz/FileOpen/ArchiveExtractionTests.cpp
             test/Slic3r/Biz/FileOpen/FileOpeningInteractorTests.cpp
+            test/Slic3r/Biz/FileOpen/FileLoadJobTests.cpp
+
+            test/Slic3r/Biz/MainThreadDialogProviderTests.cpp
 
         test/Slic3r/Biz/UserAccount/UserAccountSessionTests.cpp
+        test/Slic3r/Biz/UserAccount/UserAccountPairingTests.cpp
+        test/Slic3r/Biz/UserAccount/UserAccountTokenStoreTests.cpp
+        test/Slic3r/Biz/Network/ServiceConfigTests.cpp
+        test/Slic3r/Biz/Network/ServerTrustTests.cpp
+        test/Slic3r/Biz/Network/UrlTests.cpp
+        test/Slic3r/Biz/ConnectLocal/ConnectLocalDiscoveryTests.cpp
 
         test/Slic3r/App/CustomGCodeMigrationTests.cpp
         test/Slic3r/Biz/MatDb/MatDbClientTests.cpp

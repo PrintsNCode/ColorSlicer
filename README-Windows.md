@@ -2,7 +2,7 @@
 
 [← Back to the main README](README.md)
 
-ColorSlicer is a fork of PrusaSlicer 3.0.0-alpha14 that keeps colors and print settings from foreign 3MF files
+ColorSlicer is a fork of PrusaSlicer 3.0.0-alpha15 that keeps colors and print settings from foreign 3MF files
 and colors from OBJ files. **Not affiliated with Prusa Research.** AGPL-3.0.
 
 There are three ways to get it on Windows 10/11 (64-bit). Pick one.
@@ -42,7 +42,7 @@ GitHub Windows runner (free for public repositories).
 1. Open the repository → **Actions** → **ColorSlicer Windows** → **Run workflow** (branch `colorslicer`).
 2. Wait. The first run compiles all dependencies (about 2-3 h); the result is cached, so later runs are shorter.
 3. When it turns green, open the run → **Artifacts** → `ColorSlicer-windows-x64` and download the zip.
-4. To publish it: push a tag such as `v3.0.0-alpha14-colorslicer.1`; the workflow attaches the zip to that Release.
+4. To publish it: push a tag such as `v3.0.0-alpha15-colorslicer.1`; the workflow attaches the zip to that Release.
 
 If the first run fails, open the failing step and read the last lines of its log; that is where to look.
 

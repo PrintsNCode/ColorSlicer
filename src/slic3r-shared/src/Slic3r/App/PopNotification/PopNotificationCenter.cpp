@@ -2,9 +2,13 @@
 #include "Slic3r/App/AppServices.hpp"
 #include "Slic3r/App/Platform/IFileExplorerHandler.hpp"
 #include "Slic3r/Biz/FileDownloader/FileDownloaderJob.hpp"
+#include "Slic3r/Biz/FileOpen/FileLoadJob.hpp"
 #include "Slic3r/App/DisplayStrings.hpp"
 
 #include "Slic3r/Biz/I18N/I18N.hpp"
+#include "Slic3r/App/ConnectServiceName.hpp"
+
+#include <fmt/format.h>
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 
 #include <ranges>
@@ -154,6 +158,8 @@ void PopNotificationCenter::on_job_manager_status_changed(const JobManagerStatus
             on_download_job_status_changed(job_name, progress);
         } else if (job_name.starts_with("arrange")) {
             on_arrange_job_progress(job_name, progress);
+        } else if (job_name.starts_with(Biz::FileOpen::FILE_LOAD_JOB_PREFIX)) {
+            // Shown by LoadingProgressDialog.
         } else if (const JobNotificationSpec* spec{find_job_spec(job_name)}) {
             on_job_progress(*spec, job_name, progress);
         }
@@ -764,6 +770,18 @@ PopNotificationLayout upload_layout(const PrintHostProgressNotificationData& dat
         } else {
             msg = fmt::format("Uploading {} to {} has finished.", data.filename, data.target);
         }
+        if (data.show_printer_page_fn != nullptr) {
+            // TRN Button on a finished upload notification: show the printer in the Connect tab.
+            return PopNotificationLayoutTextButtons{
+                std::move(msg),
+                {{_u8L("Show printer"),
+                  [show_printer_page = data.show_printer_page_fn]()
+                  {
+                      show_printer_page();
+                      return true;
+                  }}}
+            };
+        }
         return PopNotificationLayoutText(std::move(msg));
     }
     case PrintHostJobStatus::Failed: {
@@ -1019,6 +1037,14 @@ void PopNotificationCenter::on_print_host_info(
                 };
         }
     }
+    if (tag == PrintHostJobInfoTag::ConnectPrinterAddress) {
+        payload.show_printer_page_fn = [this, msg]()
+            {
+                if (m_switch_left_tab_fn) {
+                    m_switch_left_tab_fn(LeftBarTabs::Printers, msg);
+                }
+            };
+    }
     if (tag == PrintHostJobInfoTag::OperationType && msg == "export") {
         payload.is_upload = false;
     }
@@ -1158,6 +1184,9 @@ void PopNotificationCenter::on_user_account_logged_out()
 {
     m_notification_list.close_notifications_of_type(PopNotificationType::UserAccountLogin);
     m_notification_list.close_notifications_of_type(PopNotificationType::UserAccountTransientError);
+    m_notification_list.close_notifications_of_type(
+        PopNotificationType::UserAccountCredentialExpiry
+    );
 
     const boost::filesystem::path avatar{m_project_interactor.user_account_interactor().avatar()};
     const std::string image_path{boost::filesystem::exists(avatar) ? avatar.string() : std::string{}};
@@ -1199,8 +1228,7 @@ void PopNotificationCenter::on_user_account_action_retry(
             PopNotificationLevel::Warning,
             0s,
             PopNotificationLayoutHeaderTextButtons(
-                // TRN Header of the Prusa Account retry notification.
-                _u8L("Prusa Account"),
+                account_service_name(),
                 text,
                 // TRN Button on the Prusa Account retry notification. Cancels the retried request.
                 {{_u8L("Cancel"),
@@ -1212,6 +1240,35 @@ void PopNotificationCenter::on_user_account_action_retry(
             )
         },
         never_equal_matcher
+    );
+}
+
+void PopNotificationCenter::on_user_account_credential_expires_soon(std::time_t expires_at)
+{
+    const long long seconds_left =
+        std::max<long long>(0, static_cast<long long>(expires_at - std::time(nullptr)));
+    const long long days_left = (seconds_left + 24 * 60 * 60 - 1) / (24 * 60 * 60);
+    const std::string text    = days_left <= 1 ?
+        // TRN Connect Local notification: the sign-in of the app ends within a day and cannot be renewed.
+        _u8L("Your sign-in to Prusa Connect (local) ends within a day. Sign in again after that.") :
+        fmt::format(
+            fmt::runtime(_L_PLURAL_u8(
+                // TRN Connect Local notification: the sign-in of the app ends soon and cannot be renewed. {} is a number of days.
+                "Your sign-in to Prusa Connect (local) ends in {} day. Sign in again after that.",
+                "Your sign-in to Prusa Connect (local) ends in {} days. Sign in again after that.",
+                static_cast<int>(days_left)
+            )),
+            days_left
+        );
+    m_notification_list.upsert_notification(
+        PopNotificationData{
+            PopNotificationType::UserAccountCredentialExpiry,
+            PopNotificationLevel::Warning,
+            0s,
+            // TRN Header of the Connect Local sign-in expiration notification.
+            PopNotificationLayoutHeaderText{_u8L("Prusa Connect (local)"), text}
+        },
+        always_equal_matcher
     );
 }
 
@@ -1441,8 +1498,11 @@ void PopNotificationCenter::on_fatal_arrange_error(
 
 void PopNotificationCenter::on_connect_handler_error(const std::string& msg)
 {
-    // TRN Header of the Prusa Connect error notification.
-    const std::string header{_u8L("Prusa Connect error")};
+    const std::string header{fmt::format(
+        // TRN Header of the Prusa Connect error notification, {} is the name of the service.
+        fmt::runtime(_u8L("{} error")),
+        connect_service_name()
+    )};
 
     upsert_notification(
         PopNotificationData{

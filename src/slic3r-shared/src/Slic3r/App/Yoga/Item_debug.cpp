@@ -5,10 +5,6 @@
 
 namespace Slic3r::App::Yoga {
 
-#ifdef DEBUG
-
-Item* Item::m_debug_item = nullptr;
-
 namespace {
 
 constexpr float default_font_size       = 14.f;
@@ -585,7 +581,5 @@ void Item::render_debug_overlay(ImDrawList* draw_list) const
 
     draw_alive_indicator({0, panel_min.y - 16});
 }
-
-#endif
 
 } // namespace Slic3r::App::Yoga

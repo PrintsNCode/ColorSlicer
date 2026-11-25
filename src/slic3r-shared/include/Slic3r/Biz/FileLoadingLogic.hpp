@@ -3,7 +3,10 @@
 #include "Slic3r/Domain/ElementRef.hpp"
 #include "Slic3r/Domain/Project.hpp"
 #include "Slic3r/Domain/Model.hpp"
+#include "Slic3r/Domain/TriangleMesh.hpp"
+#include "Slic3r/Biz/FileOpen/FileLoadJob.hpp"
 #include "Slic3r/Biz/Format/3mf/ColorImport.hpp"
+#include "Slic3r/Biz/Format/ObjColors.hpp"
 
 #include <optional>
 #include <string>
@@ -32,12 +35,34 @@ namespace Slic3r::Biz::FileLoadingLogic {
  *
  * @note During loading, the file will be scanned for zero-volume objects.
  * Any found will be automatically removed, and the user will be notified.
+ *
+ * @param on_progress Optional, called when a loading stage starts. It may throw
+ *                    FileOpen::FileLoadCancelled to stop the loading.
  */
 Domain::Project load_file_as_project(
     const boost::filesystem::path& project_file_path,
     const Domain::Preset::Bundle& bundle,
-    IMessageDialogProvider* dialog_provider
+    IMessageDialogProvider* dialog_provider,
+    const FileOpen::FileLoadProgressFn& on_progress = {}
 );
+
+/**
+ * @brief Geometry read from one source file, see read_files_for_import().
+ */
+struct ImportedFileData
+{
+    std::string file_name;
+    boost::filesystem::path file_path;
+    std::optional<Domain::TriangleMesh> mesh;
+    std::optional<Domain::Model> model;
+    bool geometry_only_3mf        = false;
+    bool is_converted_from_inches = false;
+    bool is_converted_from_meters = false;
+    // Colors of a 3MF written by another application, see Loaded3MF::file_colors.
+    std::vector<Format::ColorImport::Rgba> file_colors;
+    // Colors of an OBJ (vertex colors / materials). Turned into a painted model once the mesh is processed.
+    std::optional<Format::ObjColors::Coloring> obj_coloring;
+};
 
 /**
  * Result of importing source files into the scene graph.
@@ -54,20 +79,59 @@ struct ImportOptions {
     /// "#RRGGBB" colors of the extruders of the project the files are added to.
     /// Colors of a 3MF or OBJ written by another application are mapped to the nearest of them.
     std::vector<std::string> extruder_colors;
+    /// Material slots of the printer: the most extruders the colors may be mapped to.
+    std::size_t slot_count = 1;
 };
 
 /**
- * Load meshes (e.g., STL, OBJ) and complex models (e.g., 3MF) from multiple source files
- * and insert them into the scene graph.
- *
- * options.extruder_colors: colors of the project's extruders; colors of foreign files map to the nearest.
+ * @brief STEP import parameters from the app config, the app config is only accessed on the main
+ * thread.
  */
-ImportToSceneResult import_files_and_add_to_scene(
+struct StepImportSettings
+{
+    double linear_precision{0.};
+    double angle_precision{0.};
+    bool show_dialog{true};
+    bool changed{false}; ///< Changed in the STEP import dialog, see store_step_import_settings().
+};
+
+/**
+ * @return std::nullopt when there is no app config.
+ */
+std::optional<StepImportSettings> load_step_import_settings();
+
+/**
+ * @brief Stores the settings into the app config when they were changed.
+ */
+void store_step_import_settings(const StepImportSettings& settings);
+
+/**
+ * @brief Reads meshes (e.g., STL, OBJ) and complex models (e.g., 3MF) from multiple source files.
+ *
+ * It doesn't touch the scene nor the app config, so it can run in a job. Questions about unit
+ * conversion, STEP parameters and multi-part objects are asked through the dialog provider.
+ *
+ * @param tool_count More tools allow to convert the files into one multi-part object.
+ * @param step_settings Optional, STEP files are loaded with default parameters without them.
+ *                      Updated when the user changes them in the STEP import dialog.
+ * @param on_progress Optional, called before each file is read. It may throw
+ *                    FileOpen::FileLoadCancelled to stop the reading.
+ */
+std::vector<ImportedFileData> read_files_for_import(
     const std::vector<boost::filesystem::path>& input_file_paths,
     int tool_count,
+    IMessageDialogProvider* dialog_provider,
+    StepImportSettings* step_settings,
+    const FileOpen::FileLoadProgressFn& on_progress = {}
+);
+
+/**
+ * @brief Inserts the files read by read_files_for_import() into the scene graph as new objects.
+ */
+ImportToSceneResult add_imported_files_to_scene(
+    std::vector<ImportedFileData> data,
     Scene::SceneInteractor& scene_interactor,
     const Domain::Vec2d& bed_center,
-    IMessageDialogProvider* dialog_provider,
     const ImportOptions& options = {}
 );
 
@@ -105,13 +169,12 @@ std::vector<unsigned> map_colors_to_extruders(
 void apply_imported_colors(Domain::Project& project, Domain::ConfigContainer& config_container);
 
 /**
- * Load meshes from multiple source files and add them into selected object
+ * @brief Adds the files read by read_files_for_import() into the selected object as volumes.
  */
-void import_volumes_into_selected_object(
-    const std::vector<boost::filesystem::path>& input_file_paths,
+void add_imported_volumes_to_selected_object(
+    std::vector<ImportedFileData> data,
     const Domain::ModelVolumeType& type,
-    Scene::SceneInteractor& scene_interactor,
-    IMessageDialogProvider* dialog_provider
+    Scene::SceneInteractor& scene_interactor
 );
 
 /**

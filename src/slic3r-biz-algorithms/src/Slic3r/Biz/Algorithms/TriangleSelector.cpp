@@ -4,6 +4,8 @@
 #include <boost/container/vector.hpp>
 #include <cmath>
 #include <functional>
+#include <iterator>
+#include <limits>
 #include <queue>
 #include <cstring>
 
@@ -13,6 +15,7 @@
 #include "Slic3r/Domain/TriangleSelector.hpp"
 #include "Slic3r/Math.hpp"
 #include "Slic3r/Utils.hpp"
+#include "Slic3r/Assert.hpp"
 
 using Slic3r::Domain::AdditionalMeshInfo;
 using Slic3r::Domain::EPSILON;
@@ -186,25 +189,92 @@ void TriangleSelector::Triangle::set_division(int sides_to_split, int special_si
     this->special_side_idx = char(special_side_idx);
 }
 
-inline bool is_point_inside_triangle(const Vec3f &pt, const Vec3f &p1, const Vec3f &p2, const Vec3f &p3)
+static Vec3f
+barycentric_coordinates(const Vec3f& pt, const Vec3f& p1, const Vec3f& p2, const Vec3f& p3)
 {
     // Real-time collision detection, Ericson, Chapter 3.4
-    auto barycentric = [&pt, &p1, &p2, &p3]() -> Vec3f {
-        std::array<Vec3f, 3> v     = {p2 - p1, p3 - p1, pt - p1};
-        float                d00   = v[0].dot(v[0]);
-        float                d01   = v[0].dot(v[1]);
-        float                d11   = v[1].dot(v[1]);
-        float                d20   = v[2].dot(v[0]);
-        float                d21   = v[2].dot(v[1]);
-        float                denom = d00 * d11 - d01 * d01;
+    std::array<Vec3f, 3> v = {p2 - p1, p3 - p1, pt - p1};
+    float d00              = v[0].dot(v[0]);
+    float d01              = v[0].dot(v[1]);
+    float d11              = v[1].dot(v[1]);
+    float d20              = v[2].dot(v[0]);
+    float d21              = v[2].dot(v[1]);
+    float denom            = d00 * d11 - d01 * d01;
 
-        Vec3f barycentric_cords(1.f, (d11 * d20 - d01 * d21) / denom, (d00 * d21 - d01 * d20) / denom);
-        barycentric_cords.x() = barycentric_cords.x() - barycentric_cords.y() - barycentric_cords.z();
-        return barycentric_cords;
+    Vec3f barycentric_cords(1.f, (d11 * d20 - d01 * d21) / denom, (d00 * d21 - d01 * d20) / denom);
+    barycentric_cords.x() = barycentric_cords.x() - barycentric_cords.y() - barycentric_cords.z();
+    return barycentric_cords;
+}
+
+inline bool
+is_point_inside_triangle(const Vec3f& pt, const Vec3f& p1, const Vec3f& p2, const Vec3f& p3)
+{
+    Vec3f barycentric_cords = barycentric_coordinates(pt, p1, p2, p3);
+    return std::all_of(
+        std::begin(barycentric_cords),
+        std::end(barycentric_cords),
+        [](float cord) { return 0.f <= cord && cord <= 1.f; }
+    );
+}
+
+/**
+ * @brief Whether two triangles lying in the same plane overlap by more than EPSILON, so that touching ones do not count (separating axis test).
+ *
+ * @param normal Normal of the plane, the normals of the edges of the triangles used as the separating axes lie in the plane perpendicular to it.
+ */
+static bool coplanar_triangles_overlap(
+    const std::array<Vec3f, 3>& first_triangle,
+    const std::array<Vec3f, 3>& second_triangle,
+    const Vec3f& normal
+)
+{
+    assert(
+        std::ranges::all_of(
+            first_triangle,
+            [&](const Vec3f& point)
+            {
+                return std::abs(normal.dot(point - first_triangle[0]))
+                    <= static_cast<float>(EPSILON);
+            }
+        )
+    );
+    assert(
+        std::ranges::all_of(
+            second_triangle,
+            [&](const Vec3f& point)
+            {
+                return std::abs(normal.dot(point - first_triangle[0]))
+                    <= static_cast<float>(EPSILON);
+            }
+        )
+    );
+
+    const auto is_separated_by_edge_of =
+        [&normal](const std::array<Vec3f, 3>& triangle, const std::array<Vec3f, 3>& other_triangle)
+    {
+        for (int edge_idx = 0; edge_idx < 3; ++edge_idx) {
+            const Vec3f& edge_start = triangle[edge_idx];
+            Vec3f inner_normal =
+                (triangle[next_idx_modulo(edge_idx, 3)] - edge_start).cross(normal).normalized();
+            if (inner_normal.dot(triangle[prev_idx_modulo(edge_idx, 3)] - edge_start) < 0.f) {
+                inner_normal = -inner_normal;
+            }
+
+            if (std::ranges::all_of(
+                    other_triangle,
+                    [&](const Vec3f& point)
+                    { return inner_normal.dot(point - edge_start) <= float(EPSILON); }
+                ))
+            {
+                return true;
+            }
+        }
+
+        return false;
     };
 
-    Vec3f barycentric_cords = barycentric();
-    return std::all_of(std::begin(barycentric_cords), std::end(barycentric_cords), [](float cord) { return 0.f <= cord && cord <= 1.0; });
+    return !is_separated_by_edge_of(first_triangle, second_triangle)
+        && !is_separated_by_edge_of(second_triangle, first_triangle);
 }
 
 int TriangleSelector::select_unsplit_triangle(const Vec3f &hit, int facet_idx, const Index3 &neighbors) const
@@ -249,6 +319,165 @@ int TriangleSelector::select_unsplit_triangle(const Vec3f &hit, int facet_idx) c
     Index3 neighbors = m_neighbors[facet_idx];
     assert(this->verify_triangle_neighbors(m_triangles[facet_idx], neighbors));
     return this->select_unsplit_triangle(hit, facet_idx, neighbors);
+}
+
+int TriangleSelector::closest_unsplit_triangle_at_point(const int facet_idx, const Vec3f& point) const
+{
+    assert(this->is_original_triangle(facet_idx));
+    assert(
+        barycentric_coordinates(
+            point,
+            m_vertices[m_triangles[facet_idx].verts_idxs[0]].v,
+            m_vertices[m_triangles[facet_idx].verts_idxs[1]].v,
+            m_vertices[m_triangles[facet_idx].verts_idxs[2]].v
+        )
+            .minCoeff()
+        >= -static_cast<float>(EPSILON)
+    );
+
+    int triangle_idx = facet_idx;
+    while (m_triangles[triangle_idx].is_split()) {
+        const Triangle& triangle = m_triangles[triangle_idx];
+        // Rounding may put the point slightly outside all the children, so the one it is the least outside of is taken.
+        int closest_child_idx                   = triangle.children[0];
+        float closest_child_smallest_coordinate = -std::numeric_limits<float>::max();
+        for (int child_idx = 0; child_idx <= triangle.number_of_split_sides(); ++child_idx) {
+            const std::array<int, 3>& child_vertices =
+                m_triangles[triangle.children[child_idx]].verts_idxs;
+            const float smallest_coordinate =
+                barycentric_coordinates(
+                    point,
+                    m_vertices[child_vertices[0]].v,
+                    m_vertices[child_vertices[1]].v,
+                    m_vertices[child_vertices[2]].v
+                )
+                    .minCoeff();
+
+            if (smallest_coordinate > closest_child_smallest_coordinate) {
+                closest_child_smallest_coordinate = smallest_coordinate;
+                closest_child_idx                 = triangle.children[child_idx];
+            }
+        }
+
+        triangle_idx = closest_child_idx;
+    }
+
+    return triangle_idx;
+}
+
+float TriangleSelector::finest_leaf_edge_length(const int facet_idx) const
+{
+    float finest_edge_length = std::numeric_limits<float>::max();
+    std::vector<int> triangles_to_visit{facet_idx};
+    while (!triangles_to_visit.empty()) {
+        const Triangle& triangle = m_triangles[triangles_to_visit.back()];
+        triangles_to_visit.pop_back();
+        if (triangle.is_split()) {
+            for (int child_idx = 0; child_idx <= triangle.number_of_split_sides(); ++child_idx) {
+                triangles_to_visit.push_back(triangle.children[child_idx]);
+            }
+
+            continue;
+        }
+
+        float longest_edge_length = 0.f;
+        for (int vertex_idx = 0; vertex_idx < 3; ++vertex_idx) {
+            const Vec3f& edge_start = m_vertices[triangle.verts_idxs[vertex_idx]].v;
+            const Vec3f& edge_end =
+                m_vertices[triangle.verts_idxs[next_idx_modulo(vertex_idx, 3)]].v;
+            longest_edge_length = std::max(longest_edge_length, (edge_end - edge_start).norm());
+        }
+
+        finest_edge_length = std::min(finest_edge_length, longest_edge_length);
+    }
+
+    // A positive edge limit guarantees that the repainting stops splitting.
+    return std::max(finest_edge_length, static_cast<float>(EPSILON));
+}
+
+bool TriangleSelector::is_painted_in_other_state_under(
+    int triangle_idx,
+    const std::array<Vec3f, 3>& tested_triangle,
+    TriangleStateType expected_state
+) const
+{
+    const Triangle& triangle = m_triangles[triangle_idx];
+    const std::array<Vec3f, 3> triangle_vertices{
+        m_vertices[triangle.verts_idxs[0]].v,
+        m_vertices[triangle.verts_idxs[1]].v,
+        m_vertices[triangle.verts_idxs[2]].v
+    };
+
+    if (!coplanar_triangles_overlap(
+            triangle_vertices,
+            tested_triangle,
+            m_face_normals[triangle.source_triangle]
+        ))
+    {
+        return false;
+    }
+
+    if (!triangle.is_split()) {
+        return triangle.get_state() != expected_state;
+    }
+
+    for (int child_idx = 0; child_idx <= triangle.number_of_split_sides(); ++child_idx) {
+        if (this->is_painted_in_other_state_under(
+                triangle.children[child_idx],
+                tested_triangle,
+                expected_state
+            ))
+        {
+            return true;
+        }
+    }
+
+    return false;
+}
+
+void TriangleSelector::repaint_by_source_facet(
+    const int facet_idx,
+    const Index3& neighbors,
+    const TriangleSelector& source_selector,
+    const int source_facet_idx
+)
+{
+    const std::array<int, 3>& facet_vertices = m_triangles[facet_idx].verts_idxs;
+    const std::array<Vec3f, 3> facet_triangle{
+        m_vertices[facet_vertices[0]].v,
+        m_vertices[facet_vertices[1]].v,
+        m_vertices[facet_vertices[2]].v
+    };
+    const Vec3f centroid = (facet_triangle[0] + facet_triangle[1] + facet_triangle[2]) / 3.f;
+    const TriangleStateType centroid_state =
+        source_selector
+            .m_triangles
+                [source_selector.closest_unsplit_triangle_at_point(source_facet_idx, centroid)]
+            .get_state();
+
+    if (source_selector
+            .is_painted_in_other_state_under(source_facet_idx, facet_triangle, centroid_state))
+    {
+        this->split_triangle(facet_idx, neighbors);
+    }
+
+    if (!m_triangles[facet_idx].is_split()) {
+        this->set_triangle_state(facet_idx, centroid_state);
+        return;
+    }
+
+    // m_triangles may be reallocated by the recursion, so the parent is looked up again for every child.
+    for (int child_idx = 0; child_idx <= m_triangles[facet_idx].number_of_split_sides();
+         ++child_idx)
+    {
+        const Triangle& parent = m_triangles[facet_idx];
+        this->repaint_by_source_facet(
+            parent.children[child_idx],
+            this->child_neighbors(parent, neighbors, child_idx),
+            source_selector,
+            source_facet_idx
+        );
+    }
 }
 
 void TriangleSelector::select_patch(int facet_start, std::unique_ptr<Cursor> &&cursor, TriangleStateType new_state, const Transform3d& trafo_no_translate, bool triangle_splitting, float highlight_by_angle_deg)
@@ -312,6 +541,92 @@ bool TriangleSelector::is_any_neighbor_selected_by_seed_fill(const Triangle &tri
     return false;
 }
 
+void TriangleSelector::set_triangle_state(const int triangle_idx, const TriangleStateType state)
+{
+    Triangle& triangle = m_triangles[triangle_idx];
+    if (triangle.get_state() == state) {
+        return;
+    }
+
+    triangle.set_state(state);
+    this->record_change_of_triangle_slot(triangle_idx);
+}
+
+void TriangleSelector::set_triangle_division(
+    const int triangle_idx,
+    const int sides_to_split,
+    const int special_side_idx
+)
+{
+    Triangle& triangle = m_triangles[triangle_idx];
+    if (triangle.number_of_split_sides() == sides_to_split
+        && triangle.special_side_idx == special_side_idx)
+    {
+        return;
+    }
+
+    if (sides_to_split > 0 && !triangle.is_split()) {
+        this->set_triangle_selected_by_seed_fill(triangle_idx, false);
+    }
+
+    triangle.set_division(sides_to_split, special_side_idx);
+    this->record_change_of_triangle_slot(triangle_idx);
+}
+
+void
+TriangleSelector::set_triangle_selected_by_seed_fill(const int triangle_idx, const bool selected)
+{
+    Triangle& triangle = m_triangles[triangle_idx];
+    if (triangle.is_selected_by_seed_fill() == selected) {
+        return;
+    }
+
+    if (selected) {
+        triangle.select_by_seed_fill();
+
+        const int root_chunk_idx = triangle.source_triangle / SEED_FILL_ROOT_CHUNK_SIZE;
+        m_seed_fill_selected_root_chunks[root_chunk_idx] = true;
+    } else {
+        triangle.unselect_by_seed_fill();
+    }
+
+    this->record_change_of_triangle_slot(triangle_idx);
+}
+
+bool TriangleSelector::
+    seed_fill_apply_on_subtree(const int triangle_idx, const TriangleStateType new_state)
+{
+    const Triangle& triangle = m_triangles[triangle_idx];
+    if (!triangle.is_split()) {
+        if (!triangle.is_selected_by_seed_fill() || triangle.get_state() == new_state) {
+            return false;
+        }
+
+        this->set_triangle_state(triangle_idx, new_state);
+        return true;
+    }
+
+    bool state_changed = false;
+    for (int child_idx = 0; child_idx <= triangle.number_of_split_sides(); ++child_idx) {
+        state_changed |= this->seed_fill_apply_on_subtree(triangle.children[child_idx], new_state);
+    }
+
+    return state_changed;
+}
+
+void TriangleSelector::seed_fill_unselect_subtree(const int triangle_idx)
+{
+    const Triangle& triangle = m_triangles[triangle_idx];
+    if (!triangle.is_split()) {
+        this->set_triangle_selected_by_seed_fill(triangle_idx, false);
+        return;
+    }
+
+    for (int child_idx = 0; child_idx <= triangle.number_of_split_sides(); ++child_idx) {
+        this->seed_fill_unselect_subtree(triangle.children[child_idx]);
+    }
+}
+
 void TriangleSelector::seed_fill_select_triangles(const Vec3f &hit, int facet_start, const Transform3d& trafo_no_translate,
                                                   const ClippingPlane &clp, float seed_fill_angle, float seed_fill_gap_area,
                                                   float highlight_by_angle_deg, ForceReselection force_reselection)
@@ -351,8 +666,9 @@ void TriangleSelector::seed_fill_select_triangles(const Vec3f &hit, int facet_st
                         facet_queue.push(child);
                     }
                 }
-            } else
-                m_triangles[current_facet].select_by_seed_fill();
+            } else {
+                this->set_triangle_selected_by_seed_fill(current_facet, true);
+            }
 
             if (this->is_original_triangle(current_facet)) {
                 // Propagate over the original triangles.
@@ -453,8 +769,9 @@ void TriangleSelector::seed_fill_fill_gaps(const std::vector<int> &gap_fill_cand
             visited[current_facet_idx] = true;
         }
 
-        for (int to_seed_idx : gap_facets)
-            m_triangles[to_seed_idx].select_by_seed_fill();
+        for (int to_seed_idx : gap_facets) {
+            this->set_triangle_selected_by_seed_fill(to_seed_idx, true);
+        }
 
         gap_facets.clear();
     }
@@ -596,16 +913,10 @@ void TriangleSelector::bucket_fill_select_triangles(const Vec3f &hit, int facet_
     assert(!m_triangles[start_facet_idx].is_split());
     TriangleStateType start_facet_state = m_triangles[start_facet_idx].get_state();
 
+    this->seed_fill_unselect_all_triangles();
     if (propagate == BucketFillPropagate::NO) {
-        if (m_triangle_selected_by_seed_fill != -1)
-            this->seed_fill_unselect_triangle(m_triangle_selected_by_seed_fill);
-
-        m_triangles[start_facet_idx].select_by_seed_fill();
-        m_triangle_selected_by_seed_fill = start_facet_idx;
+        this->set_triangle_selected_by_seed_fill(start_facet_idx, true);
         return;
-    } else {
-        m_triangle_selected_by_seed_fill = -1;
-        this->seed_fill_unselect_all_triangles();
     }
 
     const float facet_angle_limit = std::cos(deg2rad(bucket_fill_angle)) - EPSILON;
@@ -624,7 +935,7 @@ void TriangleSelector::bucket_fill_select_triangles(const Vec3f &hit, int facet_
         assert(!m_triangles[current_facet].is_split());
 
         if (!visited[current_facet]) {
-            m_triangles[current_facet].select_by_seed_fill();
+            this->set_triangle_selected_by_seed_fill(current_facet, true);
 
             std::vector<int> touching_triangles = this->get_all_touching_triangles(current_facet, neighbors[current_facet], neighbors_propagated[current_facet]);
             for (const int tr_idx: touching_triangles) {
@@ -713,8 +1024,9 @@ void TriangleSelector::bucket_fill_fill_gaps(const std::vector<int> &gap_fill_ca
             visited[current_facet_idx] = true;
         }
 
-        for (int to_seed_idx : gap_facets)
-            m_triangles[to_seed_idx].select_by_seed_fill();
+        for (int to_seed_idx : gap_facets) {
+            this->set_triangle_selected_by_seed_fill(to_seed_idx, true);
+        }
 
         gap_facets.clear();
     }
@@ -725,7 +1037,6 @@ void TriangleSelector::select_triangles_by_state_type(
     const ClippingPlane& clp
 )
 {
-    m_triangle_selected_by_seed_fill = -1;
     this->seed_fill_unselect_all_triangles();
 
     for (Triangle& triangle : m_triangles) {
@@ -735,7 +1046,7 @@ void TriangleSelector::select_triangles_by_state_type(
             && triangle.get_state() == state_to_select
             && !is_facet_clipped(static_cast<int>(triangle_idx), clp))
         {
-            triangle.select_by_seed_fill();
+            this->set_triangle_selected_by_seed_fill(static_cast<int>(triangle_idx), true);
         }
     }
 }
@@ -946,6 +1257,7 @@ int TriangleSelector::triangle_midpoint_or_allocate(int itriangle, int vertexi, 
             m_vertices[midpoint].v = c;
         }
         assert(m_vertices[midpoint].ref_cnt == 0);
+        this->record_change_of_vertex_slot(midpoint);
     } else {
 #ifndef NDEBUG
         Vec3f c1 = 0.5f * (m_vertices[vertexi].v + m_vertices[vertexj].v);
@@ -1140,7 +1452,7 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Index3 &ne
     if (num_of_inside_vertices == 3) {
         // dump any subdivision and select whole triangle
         undivide_triangle(facet_idx);
-        tr->set_state(type);
+        this->set_triangle_state(facet_idx, type);
     } else {
         // the triangle is partially inside, let's recursively divide it
         // (if not already) and try selecting its children.
@@ -1151,10 +1463,12 @@ bool TriangleSelector::select_triangle_recursive(int facet_idx, const Index3 &ne
             return true;
         }
 
-        if (triangle_splitting)
+        if (triangle_splitting) {
             split_triangle(facet_idx, neighbors);
-        else if (!m_triangles[facet_idx].is_split())
-            m_triangles[facet_idx].set_state(type);
+        } else if (!m_triangles[facet_idx].is_split()) {
+            this->set_triangle_state(facet_idx, type);
+        }
+
         tr = &m_triangles[facet_idx]; // might have been invalidated by split_triangle().
 
         int num_of_children = tr->number_of_split_sides() + 1;
@@ -1177,7 +1491,7 @@ void TriangleSelector::set_facet(int facet_idx, TriangleStateType state) {
     assert(this->is_original_triangle(facet_idx));
     undivide_triangle(facet_idx);
     assert(! m_triangles[facet_idx].is_split());
-    m_triangles[facet_idx].set_state(state);
+    this->set_triangle_state(facet_idx, state);
 }
 
 void TriangleSelector::remap_states(const std::map<TriangleStateType, TriangleStateType>& remap)
@@ -1188,7 +1502,8 @@ void TriangleSelector::remap_states(const std::map<TriangleStateType, TriangleSt
         }
 
         if (const auto it = remap.find(tr.get_state()); it != remap.end()) {
-            tr.set_state(it->second);
+            const size_t facet_idx = &tr - &m_triangles.front();
+            this->set_triangle_state(static_cast<int>(facet_idx), it->second);
         }
     }
 
@@ -1224,11 +1539,11 @@ void TriangleSelector::split_triangle(int facet_idx, const Index3 &neighbors)
     std::array<stl_vertex, 3> pts_transformed; // must stay in scope of pts !!!
 
     // In case the object is non-uniformly scaled, transform the
-    // points to world coords.
-    if (m_cursor->use_world_coordinates) {
+    // points to world coords. Without a cursor (repainting), the mesh coords are used.
+    if (m_cursor != nullptr && m_cursor->use_world_coordinates) {
         for (size_t i = 0; i < pts.size(); ++i) {
             pts_transformed[i] = m_cursor->trafo * (*pts[i]);
-            pts[i] = &pts_transformed[i];
+            pts[i]             = &pts_transformed[i];
         }
     }
 
@@ -1246,14 +1561,17 @@ void TriangleSelector::split_triangle(int facet_idx, const Index3 &neighbors)
     }
     if (sides_to_split.empty()) {
         // This shall be unselected.
-        tr->set_division(0, 0);
+        this->set_triangle_division(facet_idx, 0, 0);
         return;
     }
 
     // Save how the triangle will be split. Second argument makes sense only for one
     // or two split sides, otherwise the value is ignored.
-    tr->set_division(int(sides_to_split.size()),
-        sides_to_split.size() == 2 ? side_to_keep : sides_to_split[0]);
+    this->set_triangle_division(
+        facet_idx,
+        static_cast<int>(sides_to_split.size()),
+        sides_to_split.size() == 2 ? side_to_keep : sides_to_split[0]
+    );
 
     perform_split(facet_idx, neighbors, old_type);
 }
@@ -1363,6 +1681,7 @@ void TriangleSelector::undivide_triangle(int facet_idx)
             // Chain released triangles into a linked list through children[0].
             assert(child_tr.valid());
             child_tr.m_valid = false;
+            this->record_change_of_triangle_slot(child);
             assert(m_free_triangles_head >= -1 && m_free_triangles_head < int(m_triangles.size()));
             assert(m_free_triangles_head == -1 || ! m_triangles[m_free_triangles_head].valid());
             child_tr.children[0] = m_free_triangles_head;
@@ -1370,7 +1689,8 @@ void TriangleSelector::undivide_triangle(int facet_idx)
             assert(m_free_triangles_head >= -1 && m_free_triangles_head < int(m_triangles.size()));
             ++m_invalid_triangles;
         }
-        tr.set_division(0, 0); // not split
+
+        this->set_triangle_division(facet_idx, 0, 0); // not split
     }
 }
 
@@ -1409,7 +1729,8 @@ bool TriangleSelector::remove_useless_children(int facet_idx) {
 
     // If we got here, the children can be removed.
     undivide_triangle(facet_idx);
-    tr.set_state(first_child_type);
+    this->set_triangle_state(facet_idx, first_child_type);
+
     return true;
 }
 
@@ -1465,6 +1786,8 @@ void TriangleSelector::garbage_collect()
     m_invalid_triangles = 0;
     m_free_triangles_head = -1;
     m_free_vertices_head = -1;
+
+    this->record_change_of_all_slots();
 }
 
 TriangleSelector::TriangleSelector(const Domain::TriangleMesh& mesh)
@@ -1488,9 +1811,14 @@ void TriangleSelector::reset()
         const stl_triangle_vertex_indices &ind = m_mesh.its.indices[i];
         push_triangle(ind[0], ind[1], ind[2], int(i));
     }
-    m_orig_size_vertices = int(m_vertices.size());
-    m_orig_size_indices  = int(m_triangles.size());
 
+    m_orig_size_vertices = static_cast<int>(m_vertices.size());
+    m_orig_size_indices  = static_cast<int>(m_triangles.size());
+
+    this->record_change_of_all_slots();
+
+    m_seed_fill_selected_root_chunks
+        .assign(ceil_div(m_orig_size_indices, SEED_FILL_ROOT_CHUNK_SIZE), false);
 }
 
 void TriangleSelector::set_edge_limit(float edge_limit)
@@ -1523,7 +1851,10 @@ int TriangleSelector::push_triangle(int a, int b, int c, int source_triangle, co
         assert((m_invalid_triangles == 0) == (m_free_triangles_head == -1));
         m_triangles[idx] = {a, b, c, source_triangle, state};
     }
+
     assert(m_triangles[idx].valid());
+    this->record_change_of_triangle_slot(idx);
+
     return idx;
 }
 
@@ -1821,13 +2152,37 @@ void TriangleSelector::get_facets_split_by_tjoints(const Index3 &vertices, const
     }
 }
 
-std::vector<Domain::Index2> TriangleSelector::get_seed_fill_contour() const {
-    std::vector<Domain::Index2> edges_out;
-    for (int facet_idx = 0; facet_idx < m_orig_size_indices; ++facet_idx) {
-        const Index3 neighbors = m_neighbors[facet_idx];
-        assert(this->verify_triangle_neighbors(m_triangles[facet_idx], neighbors));
-        this->get_seed_fill_contour_recursive(facet_idx, neighbors, neighbors, edges_out);
+template <std::invocable<int> Function>
+void TriangleSelector::for_each_root_of_seed_fill_selected_chunks(const Function& function) const
+{
+    for (int chunk_idx = 0; chunk_idx < static_cast<int>(m_seed_fill_selected_root_chunks.size());
+         ++chunk_idx)
+    {
+        if (!m_seed_fill_selected_root_chunks[chunk_idx]) {
+            continue;
+        }
+
+        const int first_root_idx = chunk_idx * SEED_FILL_ROOT_CHUNK_SIZE;
+        const int end_root_idx =
+            std::min(first_root_idx + SEED_FILL_ROOT_CHUNK_SIZE, m_orig_size_indices);
+
+        for (int root_idx = first_root_idx; root_idx < end_root_idx; ++root_idx) {
+            function(root_idx);
+        }
     }
+}
+
+std::vector<Domain::Index2> TriangleSelector::get_seed_fill_contour() const
+{
+    std::vector<Domain::Index2> edges_out;
+    this->for_each_root_of_seed_fill_selected_chunks(
+        [&](const int facet_idx)
+        {
+            const Index3 neighbors = m_neighbors[facet_idx];
+            assert(this->verify_triangle_neighbors(m_triangles[facet_idx], neighbors));
+            this->get_seed_fill_contour_recursive(facet_idx, neighbors, neighbors, edges_out);
+        }
+    );
 
     return edges_out;
 }
@@ -2014,12 +2369,12 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data, bool needs
                     // then go to the next.
                     Index3 neighbors = m_neighbors[triangle_id];
                     parents.push_back({triangle_id, neighbors, 0, num_of_children});
-                    m_triangles[triangle_id].set_division(num_of_split_sides, special_side);
+                    this->set_triangle_division(triangle_id, num_of_split_sides, special_side);
                     perform_split(triangle_id, neighbors, TriangleStateType::NONE);
                     continue;
                 } else {
                     // root is not split. just set the state and that's it.
-                    m_triangles[triangle_id].set_state(state);
+                    this->set_triangle_state(triangle_id, state);
                     break;
                 }
             }
@@ -2034,13 +2389,13 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data, bool needs
                 int   child_idx = last.total_children - last.processed_children - 1;
                 Index3 neighbors = this->child_neighbors(tr, last.neighbors, child_idx);
                 int this_idx = tr.children[child_idx];
-                m_triangles[this_idx].set_division(num_of_split_sides, special_side);
+                this->set_triangle_division(this_idx, num_of_split_sides, special_side);
                 perform_split(this_idx, neighbors, TriangleStateType::NONE);
                 parents.push_back({this_idx, neighbors, 0, num_of_children});
             } else {
                 // this triangle belongs to last split one
                 int child_idx = last.total_children - last.processed_children - 1;
-                m_triangles[m_triangles[last.facet_id].children[child_idx]].set_state(state);
+                this->set_triangle_state(m_triangles[last.facet_id].children[child_idx], state);
                 ++last.processed_children;
             }
 
@@ -2061,6 +2416,132 @@ void TriangleSelector::deserialize(const TriangleSplittingData &data, bool needs
                 break;
         }
     }
+}
+
+/**
+ * @brief Returns the indices of the set flags and clears the flags.
+ */
+static std::vector<int> take_set_flag_indices(std::vector<bool>& flags)
+{
+    std::vector<int> set_flag_indices;
+    for (int flag_idx = 0; flag_idx < static_cast<int>(flags.size()); ++flag_idx) {
+        if (flags[flag_idx]) {
+            set_flag_indices.emplace_back(flag_idx);
+        }
+    }
+
+    std::fill(flags.begin(), flags.end(), false);
+    return set_flag_indices;
+}
+
+std::vector<int> TriangleSelector::take_changed_triangle_slot_chunks()
+{
+    return take_set_flag_indices(m_changed_triangle_slot_chunks);
+}
+
+std::vector<int> TriangleSelector::take_changed_vertex_slot_chunks()
+{
+    return take_set_flag_indices(m_changed_vertex_slot_chunks);
+}
+
+/**
+ * An unchanged facet gets a copy of the split tree of its source facet. Any other facet gets only the state of its source facet,
+ * and when the source facet is split, the facet is repainted by splitting it along the borders of the source painting.
+ */
+TriangleSplittingData TriangleSelector::remap_to_derived_mesh(
+    const TriangleSplittingData& source_data,
+    const Domain::TriangleMesh& source_mesh,
+    const Domain::TriangleMesh& derived_mesh,
+    const std::vector<TriMesh::SourceFacet>& source_facets
+)
+{
+    ASSERT(source_facets.size() == derived_mesh.facets_count());
+
+    struct FacetToRepaint
+    {
+        int derived_facet_idx;
+        int source_facet_idx;
+    };
+
+    const std::vector<TriangleBitStreamMapping>& source_mappings = source_data.triangles_to_split;
+
+    // The derived facets, which are not unchanged copies of their split source facets, so their trees cannot be taken over.
+    std::vector<FacetToRepaint> facets_to_repaint;
+    TriangleSplittingData derived_data;
+    for (int derived_facet_idx = 0; derived_facet_idx < static_cast<int>(source_facets.size());
+         ++derived_facet_idx)
+    {
+        const TriMesh::SourceFacet& source_facet = source_facets[derived_facet_idx];
+        // The painting of the source facet is the bit range starting at its mapping, the mappings are sorted by the facet index
+        // and a facet without one is unpainted.
+        const auto mapping_it = std::ranges::lower_bound(
+            source_mappings,
+            source_facet.index,
+            {},
+            &TriangleBitStreamMapping::triangle_idx
+        );
+        if (source_facet.index < 0
+            || mapping_it == source_mappings.end()
+            || mapping_it->triangle_idx != source_facet.index)
+        {
+            continue;
+        }
+
+        const int bitstream_begin = mapping_it->bitstream_start_idx;
+        const int bitstream_end   = std::next(mapping_it) == source_mappings.end() ?
+              static_cast<int>(source_data.bitstream.size()) :
+              std::next(mapping_it)->bitstream_start_idx;
+
+        // The first two bits are the number of the split sides.
+        const bool is_source_facet_split =
+            source_data.bitstream[bitstream_begin] || source_data.bitstream[bitstream_begin + 1];
+        if (is_source_facet_split && !source_facet.is_unchanged) {
+            facets_to_repaint.push_back(
+                {.derived_facet_idx = derived_facet_idx, .source_facet_idx = source_facet.index}
+            );
+            continue;
+        }
+
+        derived_data.triangles_to_split
+            .emplace_back(derived_facet_idx, static_cast<int>(derived_data.bitstream.size()));
+        derived_data.bitstream.insert(
+            derived_data.bitstream.end(),
+            source_data.bitstream.begin() + bitstream_begin,
+            source_data.bitstream.begin() + bitstream_end
+        );
+    }
+
+    if (facets_to_repaint.empty()) {
+        if (!derived_data.bitstream.empty()) {
+            derived_data.update_used_states(0);
+        }
+
+        if (derived_data.triangles_to_split.size() < derived_mesh.facets_count()) {
+            derived_data.used_states[static_cast<int>(TriangleStateType::NONE)] = true;
+        }
+
+        return derived_data;
+    }
+
+    TriangleSelector source_selector(source_mesh);
+    source_selector.deserialize(source_data, false);
+
+    TriangleSelector derived_selector(derived_mesh);
+    derived_selector.deserialize(derived_data, false);
+    for (const FacetToRepaint& facet_to_repaint : facets_to_repaint) {
+        derived_selector.set_edge_limit(
+            source_selector.finest_leaf_edge_length(facet_to_repaint.source_facet_idx)
+        );
+        derived_selector.repaint_by_source_facet(
+            facet_to_repaint.derived_facet_idx,
+            derived_selector.m_neighbors[facet_to_repaint.derived_facet_idx],
+            source_selector,
+            facet_to_repaint.source_facet_idx
+        );
+        derived_selector.remove_useless_children(facet_to_repaint.derived_facet_idx);
+    }
+
+    return derived_selector.serialize();
 }
 
 // Lightweight variant of deserialization, which only tests whether a face of test_state exists.
@@ -2116,45 +2597,24 @@ bool TriangleSelector::has_facets(const TriangleSplittingData &data, const Trian
 
 void TriangleSelector::seed_fill_unselect_all_triangles()
 {
-    for (Triangle &triangle : m_triangles)
-        if (!triangle.is_split())
-            triangle.unselect_by_seed_fill();
+    this->for_each_root_of_seed_fill_selected_chunks(
+        [&](const int root_idx) { this->seed_fill_unselect_subtree(root_idx); }
+    );
+    m_seed_fill_selected_root_chunks.assign(m_seed_fill_selected_root_chunks.size(), false);
 }
 
-void TriangleSelector::seed_fill_unselect_triangle(const int facet_idx) {
-    assert(facet_idx > 0 && facet_idx < m_triangles.size());
-    Triangle &triangle = m_triangles[facet_idx];
-
-    assert(!triangle.is_split());
-    if (!triangle.is_split())
-        triangle.unselect_by_seed_fill();
-}
-
-void TriangleSelector::seed_fill_apply_on_triangles(TriangleStateType new_state) {
-    if (m_triangle_selected_by_seed_fill != -1) {
-        this->seed_fill_apply_on_single_triangle(new_state, m_triangle_selected_by_seed_fill);
-        m_triangle_selected_by_seed_fill = -1;
-        return;
-    }
-
-    for (Triangle &triangle : m_triangles)
-        if (!triangle.is_split() && triangle.is_selected_by_seed_fill())
-            triangle.set_state(new_state);
-
-    for (Triangle &triangle : m_triangles)
-        if (triangle.is_split() && triangle.valid()) {
-            size_t facet_idx = &triangle - &m_triangles.front();
-            remove_useless_children(int(facet_idx));
+void TriangleSelector::seed_fill_apply_on_triangles(TriangleStateType new_state)
+{
+    this->for_each_root_of_seed_fill_selected_chunks(
+        [&](const int root_idx)
+        {
+            if (this->seed_fill_apply_on_subtree(root_idx, new_state)
+                && m_triangles[root_idx].is_split())
+            {
+                this->remove_useless_children(root_idx);
+            }
         }
-}
-
-void TriangleSelector::seed_fill_apply_on_single_triangle(TriangleStateType new_state, const int facet_idx) {
-    assert(facet_idx > 0 && facet_idx < m_triangles.size());
-
-    if (Triangle &triangle = m_triangles[facet_idx]; !triangle.is_split() && triangle.is_selected_by_seed_fill()) {
-        triangle.set_state(new_state);
-        remove_useless_children(triangle.source_triangle);
-    }
+    );
 }
 
 double TriangleSelector::get_triangle_area(const Triangle &triangle) const {
@@ -2162,6 +2622,36 @@ double TriangleSelector::get_triangle_area(const Triangle &triangle) const {
     const stl_vertex &v1 = m_vertices[triangle.verts_idxs[1]].v;
     const stl_vertex &v2 = m_vertices[triangle.verts_idxs[2]].v;
     return (v1 - v0).cross(v2 - v0).norm() / 2.;
+}
+
+/**
+ * @brief Sets the flag of the chunk holding the slot, adding the missing flags up to that chunk.
+ */
+static void record_change_of_slot(std::vector<bool>& changed_slot_chunks, const int slot_idx)
+{
+    const size_t chunk_idx = static_cast<size_t>(slot_idx / TriangleSelector::SLOT_CHANGE_CHUNK_SIZE);
+    if (chunk_idx >= changed_slot_chunks.size()) {
+        changed_slot_chunks.resize(chunk_idx + 1, false);
+    }
+
+    changed_slot_chunks[chunk_idx] = true;
+}
+
+void TriangleSelector::record_change_of_triangle_slot(const int triangle_idx)
+{
+    record_change_of_slot(m_changed_triangle_slot_chunks, triangle_idx);
+}
+
+void TriangleSelector::record_change_of_vertex_slot(const int vertex_idx)
+{
+    record_change_of_slot(m_changed_vertex_slot_chunks, vertex_idx);
+}
+
+void TriangleSelector::record_change_of_all_slots()
+{
+    m_changed_triangle_slot_chunks
+        .assign(ceil_div(m_triangles.size(), SLOT_CHANGE_CHUNK_SIZE), true);
+    m_changed_vertex_slot_chunks.assign(ceil_div(m_vertices.size(), SLOT_CHANGE_CHUNK_SIZE), true);
 }
 
 TriangleSelector::Cursor::Cursor(

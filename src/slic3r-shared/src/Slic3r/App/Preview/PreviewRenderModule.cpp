@@ -367,7 +367,10 @@ void PreviewRenderModule::on_status_cache_status_code_changed(const Domain::Slic
             if (status && status == Biz::Slicing::Status::Modified)
                 m_viewer->reset();
         }*/
-    m_object_list->update_sliced_info();
+    // The panel shows the estimates of the selected bed only.
+    if (id == m_project_interactor.selected_bed_slicing_id()) {
+        m_object_list->update_sliced_info();
+    }
 
     const auto status{m_project_interactor.status_cache().get_status(id)};
     if (status && status->code == Slicing::StatusCode::Modified) {
@@ -455,6 +458,11 @@ void PreviewRenderModule::set_modal_dialog(ModalDialog modal_dialog)
 MsgBoxHandler* PreviewRenderModule::msg_box_handler()
 {
     return &m_layout->msg_box_handler();
+}
+
+Yoga::RootItem& PreviewRenderModule::root_item()
+{
+    return m_layout->root_item();
 }
 
 void PreviewRenderModule::on_init(

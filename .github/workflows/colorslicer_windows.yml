@@ -5,7 +5,7 @@ name: ColorSlicer Windows
 # and only build ColorSlicer (about 30-60 minutes).
 #
 # Run it by hand: Actions -> "ColorSlicer Windows" -> Run workflow.
-# Pushing a tag like v3.0.0-alpha14-colorslicer.1 also attaches the .zip to that Release.
+# Pushing a tag like v3.0.0-alpha15-colorslicer.1 also attaches the .zip to that Release.
 
 on:
   workflow_dispatch:

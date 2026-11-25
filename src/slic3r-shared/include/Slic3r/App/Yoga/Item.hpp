@@ -2,6 +2,7 @@
 
 #include "Slic3r/App/Yoga/Object.hpp"
 
+#include <cmath>
 #include <memory>
 #include <optional>
 #include <variant>
@@ -19,6 +20,14 @@ using ItemPtr = std::unique_ptr<Item>;
 
 class Popup;
 class RootItem;
+
+struct YogaConfiguration
+{
+    Render::ImguiRender* imgui_render = nullptr;
+    Item* debug_item                  = nullptr;
+    bool test_mode                    = false;
+    bool wheel_changes_value          = true;
+};
 
 /**
  * @brief The Item class is an Object Item in a tree that can be styled using Yoga
@@ -136,6 +145,14 @@ public:
     void set_height(const Unit& height);
     void set_width_percent(float width_percent);
     void set_height_percent(float height_percent);
+    /**
+     * @brief Width is computed by the layout from the content
+     */
+    void reset_width();
+    /**
+     * @brief Height is computed by the layout from the content
+     */
+    void reset_height();
     void set_left(const Unit& left);
     void set_right(const Unit& right);
     void set_top(const Unit& top);
@@ -169,6 +186,13 @@ public:
 
     static void set_imgui_render(Render::ImguiRender* imgui_render);
 
+    /**
+     * Enables the debug tools (Alt + hover overlay) outside DEBUG builds, used by --test mode.
+     */
+    static void set_test_mode(bool test_mode);
+    static bool debug_enabled();
+    static void set_wheel_changes_value(bool wheel_changes_value);
+
     void set_debug_border(bool show_debug_border);
 
     Vec2f get_global_pos() const;
@@ -180,14 +204,19 @@ public:
      */
     Item* parent_item() const;
 
-#ifdef DEBUG
+    Vec2f last_render_pos() const;
+    Vec2f last_render_size() const;
+    int last_render_frame() const;
+
     void render_debug_overlay(ImDrawList* draw_list) const;
-#endif
 
 protected:
     static ImVec2 to_im(const Vec2f& val);
     static Vec2f from_im(const ImVec2& val);
     static bool is_node_visible(YGNodeRef node);
+    static Render::ImguiRender* imgui_render();
+    static bool wheel_changes_value();
+    static Item* take_debug_item();
 
     virtual Vec2f get_item_size();
 
@@ -195,6 +224,11 @@ protected:
     virtual void visible_updated_internal();
 
     virtual void on_resized();
+    /**
+     * @brief Called when evaluated min/max width/height changed, either by setter or by size info
+     */
+    virtual void size_limits_changed();
+    Vec2f evaluated_min_size() const;
 
     void update_children_render_order();
 
@@ -225,17 +259,10 @@ protected:
     void invalidate_min_size_calculation();
 
 protected:
-    // Todo: Cleanup this when slic3r-yoga will be introduced
-    static Render::ImguiRender* m_imgui_render;
-
     std::vector<Item*> m_children_render_order;
 
     float m_last_width  = 0;
     float m_last_height = 0;
-
-#ifdef DEBUG
-    static Item* m_debug_item;
-#endif
 
 private:
     void update_enabled();
@@ -243,8 +270,13 @@ private:
 
     virtual void size_info_changed(const SizeInfo& info_size);
 
+    void record_render(const Vec2f& pos, const Vec2f& size);
+
 private:
     using YogaSize = std::variant<EvaluatedUnit, float>;
+
+    // Todo: Cleanup this when slic3r-yoga will be introduced
+    inline static YogaConfiguration m_configuration;
 
     YGNodeRef m_node = nullptr;
 
@@ -292,6 +324,10 @@ private:
     bool m_has_items    = false;
     bool m_enabled      = true;
     bool m_visible      = true;
+
+    Vec2f m_last_render_pos{NAN, NAN};
+    Vec2f m_last_render_size{NAN, NAN};
+    int m_last_render_frame = -1;
 };
 
 /**

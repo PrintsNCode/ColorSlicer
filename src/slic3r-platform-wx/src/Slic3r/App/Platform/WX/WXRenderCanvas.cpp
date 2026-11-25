@@ -7,6 +7,9 @@
 #include <wx/dcclient.h>
 #include <wx/clipbrd.h>
 #include <wx/toplevel.h>
+#if defined(__WXGTK__)
+#include <gtk/gtk.h>
+#endif
 #include <imgui/imgui.h>
 #include <imgui/backends/imgui_impl_opengl3.h>
 
@@ -252,32 +255,30 @@ KeyCode get_key_code_from_event(const wxKeyEvent& event)
     return KeyCode::None;
 }
 
-static wxGLAttributes create_wxglattributes()
+static wxGLAttributes create_wxglattributes(bool multisample)
 {
-    //
-    // TODO:
-    // port missing settings from OpenGLManager::create_wxglcanvas
-    //
-
     wxGLAttributes ret;
-    ret.PlatformDefaults()
-        .DoubleBuffer()
-        .RGBA()
-        .MinRGBA(8, 8, 8, 8)
-        .Depth(24)
-        .SampleBuffers(1)
-        .Samplers(4)
+    ret.PlatformDefaults().DoubleBuffer().RGBA().MinRGBA(8, 8, 8, 8).Depth(24);
+    if (multisample) {
+        ret.SampleBuffers(1).Samplers(4);
+    }
 #ifdef __APPLE__
-        // on MAC the method RGBA() has no effect
-        .SetNeedsARB(true);
-#else
-        ;
+    // on MAC the method RGBA() has no effect
+    ret.SetNeedsARB(true);
 #endif // __APPLE__
     ret.EndList();
+    return ret;
+}
 
+static wxGLAttributes create_wxglattributes()
+{
+    // Displays without multisampled visuals (e.g. Xvfb) get a canvas without antialiasing.
+    wxGLAttributes ret = create_wxglattributes(true);
+    if (wxGLCanvas::IsDisplaySupported(ret)) {
+        return ret;
+    }
+    ret = create_wxglattributes(false);
     DEBUG_ASSERT(wxGLCanvas::IsDisplaySupported(ret));
-    if (!wxGLCanvas::IsDisplaySupported(ret))
-        ret.Reset();
     return ret;
 }
 
@@ -291,6 +292,23 @@ static ImGui_ImplWX_Data* ImGui_ImplWX_GetBackendData()
     return ImGui::GetCurrentContext() ?
         static_cast<ImGui_ImplWX_Data*>(ImGui::GetIO().BackendPlatformUserData) :
         nullptr;
+}
+
+static wxCursor themed_cursor(const char* name, wxStockCursor fallback)
+{
+#if defined(__WXGTK__)
+    GdkCursor* cursor = gdk_cursor_new_from_name(gdk_display_get_default(), name);
+    GdkPixbuf* pixbuf = cursor ? gdk_cursor_get_image(cursor) : nullptr;
+    if (cursor) {
+        g_object_unref(cursor);
+    }
+    if (pixbuf) {
+        const gchar* x_hot = gdk_pixbuf_get_option(pixbuf, "x_hot");
+        const gchar* y_hot = gdk_pixbuf_get_option(pixbuf, "y_hot");
+        return wxCursor(wxBitmap(pixbuf), x_hot ? atoi(x_hot) : 0, y_hot ? atoi(y_hot) : 0);
+    }
+#endif
+    return wxCursor(fallback);
 }
 
 static void ImGui_ImplWX_InitMouseCursor()
@@ -313,8 +331,8 @@ static void ImGui_ImplWX_InitMouseCursor()
     ); // Used for corner resizing, so need NWSE, not SIZING, which is moving
     bd->MouseCursors[ImGuiMouseCursor_ResizeNS]   = wxCursor(wxCURSOR_SIZENS);
     bd->MouseCursors[ImGuiMouseCursor_ResizeEW]   = wxCursor(wxCURSOR_SIZEWE);
-    bd->MouseCursors[ImGuiMouseCursor_ResizeNESW] = wxCursor(wxCURSOR_SIZENESW);
-    bd->MouseCursors[ImGuiMouseCursor_ResizeNWSE] = wxCursor(wxCURSOR_SIZENWSE);
+    bd->MouseCursors[ImGuiMouseCursor_ResizeNESW] = themed_cursor("nesw-resize", wxCURSOR_SIZENESW);
+    bd->MouseCursors[ImGuiMouseCursor_ResizeNWSE] = themed_cursor("nwse-resize", wxCURSOR_SIZENWSE);
     bd->MouseCursors[ImGuiMouseCursor_Hand]       = wxCursor(wxCURSOR_HAND);
     bd->MouseCursors[ImGuiMouseCursor_NotAllowed] = wxCursor(wxCURSOR_NO_ENTRY);
 }

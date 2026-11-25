@@ -1,6 +1,8 @@
 #include "DesktopApp.hpp"
 
 #include "MainFrame.hpp"
+#include "Testing/TestDialogs.hpp"
+#include "Testing/TestMode.hpp"
 #include "Slic3r/App/Undo/Store.hpp"
 #include "SplashScreen.hpp"
 #include <wx/weakref.h>
@@ -34,6 +36,7 @@
 
 #include <Slic3r/Directories.hpp>
 #include <Slic3r/App/Render/TextureManager.hpp>
+#include <Slic3r/App/Yoga/Item.hpp>
 
 #include <Slic3r/Biz/Platform/PlatformServices.hpp>
 #include <Slic3r/Biz/Platform/JobManager/JobManager.hpp>
@@ -271,12 +274,22 @@ static void select_favorite_preset(
 
 bool DesktopApp::OnInit()
 {
+    // First, so that no wx dialog is shown in test mode, not even during startup.
+    if (m_init_params.misc.test_mode) {
+        m_test_dialogs = std::make_shared<Testing::TestDialogs>();
+        m_modal_hook   = std::make_unique<Testing::ModalHook>(m_test_dialogs);
+        m_modal_hook->Register();
+    }
+
     auto& app_services{AppServices::instance()};
     Theme::Style style = app_services.app_config().get<Theme::Style>("theme");
 
     app_services.set_theme(std::make_unique<Theme>(style));
     app_services.theme().set_transparent_window_alpha(
         app_services.app_config().get<double>("transparent_window_alpha")
+    );
+    Yoga::Item::set_wheel_changes_value(
+        app_services.app_config().get<bool>("scroll_wheel_changes_value")
     );
 
     const AppearanceResult result = SetAppearance(
@@ -339,10 +352,23 @@ bool DesktopApp::OnInit()
 
     platform_services.set_main_thread_dispatcher(std::make_unique<WXMainThreadDispatcher>());
 
+    // Before any window exists, so that a slicer whose server can't start exits cleanly.
+    if (m_init_params.misc.test_mode) {
+        m_test_mode = std::make_unique<Testing::TestMode>(
+            m_init_params.misc.test_mode->port,
+            m_init_params.misc.test_mode->password,
+            m_test_dialogs
+        );
+        if (!m_test_mode->start()) {
+            SetErrorExitCode(EXIT_FAILURE);
+            return false;
+        }
+    }
+
     platform_services.set_secret_store(SecretStoreFactory::create_secret_store());
     // Reset Token store if Account not allowed in app_config
-    if (!app_services.app_config().is_prusa_account_enabled()) {
-        Biz::UserAccount::TokenStore::reset();
+    if (!app_services.app_config().is_account_service_enabled()) {
+        Biz::UserAccount::TokenStore::reset_all_modes();
     }
     platform_services.set_job_manager(
         std::make_unique<JobManager>(platform_services.main_thread_dispatcher())
@@ -364,6 +390,13 @@ bool DesktopApp::OnInit()
         *m_thumbnail_image_generator
     );
 
+    m_account_service_switcher = std::make_unique<AccountServiceSwitcher>(
+        app_services.app_config(),
+        app_services.app_config_interactor(),
+        make_account_service_backend(m_project_interactor->user_account_interactor())
+    );
+    app_services.set_account_service_switcher(m_account_service_switcher.get());
+
     auto undo_store_ptr{std::make_unique<Undo::Store>(*m_project_interactor)};
     m_undo_store = undo_store_ptr.get();
 
@@ -376,7 +409,11 @@ bool DesktopApp::OnInit()
     m_thumbnail_store_updater =
         std::make_shared<App::ThumbnailStoreUpdater>(*m_thumbnail_image_generator, m_thumbnail_store);
 
-    app_services.set_dialog_manager(std::make_unique<WX::DialogManager>());
+    if (m_test_dialogs) {
+        app_services.set_dialog_manager(std::make_unique<Testing::TestDialogManager>(m_test_dialogs));
+    } else {
+        app_services.set_dialog_manager(std::make_unique<WX::DialogManager>());
+    }
 
     app_services.set_navigator(std::make_unique<Navigator>());
     Navigator& navigator{app_services.navigator()};
@@ -485,6 +522,10 @@ bool DesktopApp::OnInit()
     m_project_saver = std::make_shared<ProjectSaver>(*m_project_interactor, *m_thumbnail_store);
 
     m_main_frame = new MainFrame(m_workbench, *m_project_interactor, navigator, m_project_saver);
+    if (m_init_params.misc.test_mode) {
+        m_main_frame->show_testing_title(m_init_params.misc.test_mode->port);
+        Yoga::Item::set_test_mode(true);
+    }
     platform_services.app_instance_message_handler().init(m_main_frame->GetHandle());
     Platform::WX::WXRenderCanvas& canvas = m_main_frame->get_render_canvas();
     m_gl_context                         = canvas.release_context();
@@ -503,6 +544,10 @@ bool DesktopApp::OnInit()
     // The main thread dispatcher is drained from the canvas only once the window is up, so the
     // answer of the check started above cannot arrive before this point.
     m_main_frame->Show();
+
+    if (m_test_mode) {
+        m_test_mode->attach(canvas, navigator);
+    }
 
     return true;
 }
@@ -655,7 +700,7 @@ void DesktopApp::finish_init()
     m_project_interactor->user_account_interactor()
         .add_listener<Biz::UserAccount::IUserAccountListener>(m_main_frame);
 
-    m_project_interactor->user_account_interactor().init(app_services.app_config().is_prusa_account_enabled());
+    m_project_interactor->user_account_interactor().init(app_services.app_config().is_account_usable());
 
     m_prusalink_storage_listener =
         std::make_unique<PrintHost::PrusaLinkStorageListener>(*m_project_interactor.get());
@@ -716,6 +761,7 @@ void DesktopApp::finish_init()
 
 DesktopApp::~DesktopApp()
 {
+    m_test_mode.reset();
     m_mouse_3d_backend.reset();
 
     // Before m_project_interactor, which owns the interactor the model listens to and calls into.
@@ -723,6 +769,10 @@ DesktopApp::~DesktopApp()
     if (app_services.has_preset_updater_controller()) {
         app_services.preset_updater_controller().shutdown();
         app_services.navigator().shutdown();
+    }
+    // Before Biz::Platform::close(), which destroys the job manager and the timer queue.
+    if (m_plater_module) {
+        m_plater_module->shutdown();
     }
     if (m_project_interactor) {
         m_project_interactor->file_opening_interactor().set_archive_dialog(nullptr);
@@ -878,7 +928,7 @@ void DesktopApp::MacOpenURL(const wxString& url)
     } else if (boost::starts_with(narrow_url, "prusaslicer://open")) {
         m_project_interactor->on_download_models({std::move(narrow_url)});
     } else {
-        SPDLOG_ERROR("MacOpenURL recieved improper URL: {}", narrow_url);
+        SPDLOG_ERROR("MacOpenURL recieved improper URL: {}", Biz::AppInstance::redact_app_urls(narrow_url));
     }
 }
 #endif /* __APPLE__ */

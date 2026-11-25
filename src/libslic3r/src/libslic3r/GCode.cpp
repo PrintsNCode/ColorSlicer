@@ -572,6 +572,7 @@ namespace DoExport {
         processor_config.use_volumetric_e = config.get<bool>("use_volumetric_e");
         processor_config.export_remaining_time_enabled = config.get<bool>("remaining_times");
         processor_config.spiral_vase_enabled = config.get<bool>("spiral_vase");
+        processor_config.sequential_print = config.get<bool>("complete_objects");
 
         const std::optional<bool> supports_tool_preheating{Domain::Preset::get_feature<bool>(
             hw_printer_config.features,
@@ -2144,6 +2145,8 @@ static std::string emit_custom_gcode_per_print_z(
     using Domain::CustomGCode::Type;
     using Biz::libpgcode::reserved_tag;
     using Biz::libpgcode::Tags;
+    using Biz::libpgcode::custom_tag;
+    using Biz::libpgcode::CustomTags;
     std::string gcode;
 
     // Extruder switches are processed by LayerTools, they should be filtered out.
@@ -2167,9 +2170,13 @@ static std::string emit_custom_gcode_per_print_z(
 
             // add tag for processor
             gcode += ";" + std::string(reserved_tag(Tags::Pause_Print)) + "\n";
-            //! FIXME_in_fw show message during print pause
-            if (!pause_print_msg.empty())
+            if (!pause_print_msg.empty()) {
+                // add tag for processor, it restores the message from it
+                gcode += ";" + std::string(custom_tag(CustomTags::Pause_Print_Message))
+                    + pause_print_msg + "\n";
+                //! FIXME_in_fw show message during print pause
                 gcode += "M117 " + pause_print_msg + "\n";
+            }
 
             ParserConfig cfg;
             cfg.set("color_change_extruder", int(current_extruder_id));
@@ -2180,15 +2187,20 @@ static std::string emit_custom_gcode_per_print_z(
         } else {
             // add tag for processor
             gcode += ";" + std::string(reserved_tag(Tags::Custom_Code)) + "\n";
-            if (gcode_type == CustomGCode::Type::Template)
-                // Template Custom Gcode
+            if (gcode_type == CustomGCode::Type::Template) {
+                // Template Custom Gcode, the processor recognizes the template by these tags
+                gcode += ";" + std::string(custom_tag(CustomTags::Custom_Template_Start)) + "\n";
                 gcode += gcodegen.placeholder_parser_process(
                     "template_custom_gcode", config.get<std::string>("template_custom_gcode"),
                     current_extruder_id
                 );
-            else
-                // custom Gcode
+                gcode += "\n;" + std::string(custom_tag(CustomTags::Custom_Template_End));
+            } else {
+                // custom Gcode, the processor restores its text from the lines between these tags
+                gcode += ";" + std::string(custom_tag(CustomTags::Custom_Code_Start)) + "\n";
                 gcode += custom_gcode.extra;
+                gcode += "\n;" + std::string(custom_tag(CustomTags::Custom_Code_End));
+            }
         }
         gcode += "\n";
     }
@@ -2768,7 +2780,6 @@ LayerResult GCodeGenerator::process_layer(
     if (this->line_distancer_is_required(layer_tools.extruders, instances_to_print) && this->m_layer != nullptr && this->m_layer->lower_layer != nullptr)
         m_travel_obstacle_tracker.init_layer(layer, layers);
 
-    m_object_layer_over_raft = false;
     if (!first_layer && ! print.config().get<std::string>("layer_gcode").empty()) {
         ParserConfig config;
         config.set("layer_num", m_layer_index);
@@ -2842,6 +2853,10 @@ LayerResult GCodeGenerator::process_layer(
     // Extrude the skirt, brim, support, perimeters, infill ordered by the extruders.
     for (const ExtruderExtrusions &extruder_extrusions : extrusions)
     {
+        // The object extrusions of the previous extruder may have set it,
+        // the skirt must not be printed at the speed and acceleration over raft.
+        m_object_layer_over_raft = false;
+
         gcode += uses_wipe_tower ?
             m_wipe_tower->tool_change(
                 *this,
@@ -3544,6 +3559,14 @@ std::string GCodeGenerator::_extrude(
         } else {
             acceleration = config.default_acceleration.at(extruder_id);
         }
+
+        if (path_attr.speed_limits.has(ExtrusionSpeedLimit::OverSupportInterface)
+            && config.over_support_interface_acceleration.at(extruder_id) > 0)
+        {
+            acceleration =
+                std::min(acceleration, config.over_support_interface_acceleration.at(extruder_id));
+        }
+
         gcode += m_writer.set_print_acceleration((unsigned int)floor(acceleration + 0.5));
     }
 
@@ -3572,13 +3595,6 @@ std::string GCodeGenerator::_extrude(
             speed = infill_speed;
         } else if (path_attr.role == ExtrusionRole::SolidInfill) {
             speed = solid_infill_speed;
-        } else if (path_attr.role == ExtrusionRole::InfillOverBridge) {
-            const double over_bridge_speed{config.over_bridge_speed.at(extruder_id).get_abs_value(solid_infill_speed)};
-            if (over_bridge_speed > 0) {
-                speed = over_bridge_speed;
-            } else {
-                speed = solid_infill_speed;
-            }
         } else if (path_attr.role == ExtrusionRole::TopSolidInfill) {
             speed = config.top_solid_infill_speed.at(extruder_id).get_abs_value(solid_infill_speed);
         } else if (path_attr.role == ExtrusionRole::Ironing) {
@@ -3634,6 +3650,20 @@ std::string GCodeGenerator::_extrude(
 
     if (dynamic_print_and_fan_speeds.print_speed > -1) {
         speed = dynamic_print_and_fan_speeds.print_speed;
+    }
+
+    if (path_attr.speed_limits.has(ExtrusionSpeedLimit::OverSupportInterface)
+        && config.over_support_interface_speed.at(extruder_id) > 0)
+    {
+        speed = std::min(speed, config.over_support_interface_speed.at(extruder_id));
+    }
+
+    if (path_attr.speed_limits.has(ExtrusionSpeedLimit::OverBridge)) {
+        const double over_bridge_speed =
+            config.over_bridge_speed.at(extruder_id).get_abs_value(solid_infill_speed);
+        if (over_bridge_speed > 0) {
+            speed = std::min(speed, over_bridge_speed);
+        }
     }
 
     // cap speed with max_volumetric_speed anyway (even if user is not using autospeed)

@@ -86,6 +86,9 @@ enum class Icon : wchar_t
     TobBarShowUI,
     TobBarPlus,
     TopBarCross,
+    Pin,
+    ArrowsDiagonal,
+    DotsTriangle,
 
     // Gizmo Paint-on-Supports
     Triangle,
@@ -121,6 +124,11 @@ enum class Icon : wchar_t
     Reload,
     ReflectionX,
     ReflectionY,
+
+    // Scale widget
+    MirrorX,
+    MirrorY,
+    MirrorZ,
 
     // Gizmo Arrange
     ArrangeTopLeft,

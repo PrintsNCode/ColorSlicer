@@ -27,6 +27,16 @@ RootItem::~RootItem()
 
 void RootItem::render(const Vec2f& pos, const Vec2f& size) {}
 
+IDialogGeometryStore* RootItem::dialog_geometry_store() const
+{
+    return m_dialog_geometry_store;
+}
+
+void RootItem::set_dialog_geometry_store(IDialogGeometryStore* store)
+{
+    m_dialog_geometry_store = store;
+}
+
 template <class F>
 void RootItem::for_each_popup_reconcile(F&& fn)
 {
@@ -101,6 +111,8 @@ void RootItem::root_render(const SizeInfo& size_info)
 
     render_debug_overlay();
 
+    m_last_rendered_frame = ImGui::GetFrameCount();
+
     if (m_loop_events.process_events() || m_style_dirty) {
         // There were a number of processed events,
         // therefore we need to schedule another render pass
@@ -108,6 +120,11 @@ void RootItem::root_render(const SizeInfo& size_info)
         // Some item called set_style_dirty in render()
         Biz::Platform::PlatformServices::instance().render_request_handler().request_render();
     }
+}
+
+int RootItem::last_rendered_frame() const
+{
+    return m_last_rendered_frame;
 }
 
 void RootItem::set_style_dirty()
@@ -122,12 +139,9 @@ void RootItem::push_event(EventPtr event)
 
 void RootItem::render_debug_overlay()
 {
-#ifdef DEBUG
-    if (m_debug_item) {
-        m_debug_item->render_debug_overlay(ImGui::GetForegroundDrawList());
-        m_debug_item = nullptr;
+    if (Item* item = take_debug_item()) {
+        item->render_debug_overlay(ImGui::GetForegroundDrawList());
     }
-#endif
 }
 
 void RootItem::calculate_size()

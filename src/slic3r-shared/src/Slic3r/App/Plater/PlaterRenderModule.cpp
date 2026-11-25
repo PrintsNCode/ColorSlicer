@@ -78,6 +78,8 @@
 #include "Slic3r/App/Wildcards.hpp"
 #include "Slic3r/App/PreferencesDialog.hpp"
 #include "Slic3r/App/InvalidDataDialog.hpp"
+#include "Slic3r/App/LoadingProgressDialog.hpp"
+#include "Slic3r/Biz/Platform/PlatformServices.hpp"
 #include "Slic3r/App/SidebarStackLayout.hpp"
 #include "Slic3r/App/ColorMix/ColorMixDialog.hpp"
 #include "Slic3r/App/PrinterSettingsDialog.hpp"
@@ -157,6 +159,11 @@ PlaterRenderModule::~PlaterRenderModule()
     }
 }
 
+void PlaterRenderModule::shutdown()
+{
+    m_loading_progress_dialog->shutdown();
+}
+
 void PlaterRenderModule::set_modal_dialog(ModalDialog modal_dialog)
 {
     auto handle_dialog = [&](Yoga::Popup* dialog, ModalDialog modal)
@@ -174,6 +181,7 @@ void PlaterRenderModule::set_modal_dialog(ModalDialog modal_dialog)
     handle_dialog(m_preset_updater_dialog.get(), ModalDialog::PresetUpdater);
     handle_dialog(m_invalid_data_dialog.get(), ModalDialog::InvalidData);
     handle_dialog(m_effective_values_dialog.get(), ModalDialog::EffectiveValues);
+    handle_dialog(m_loading_progress_dialog.get(), ModalDialog::LoadingProgress);
     if (modal_dialog == ModalDialog::MsgBox) {
         msg_box_handler()->open_modal();
     } else {
@@ -186,6 +194,11 @@ void PlaterRenderModule::set_modal_dialog(ModalDialog modal_dialog)
 MsgBoxHandler* PlaterRenderModule::msg_box_handler()
 {
     return &m_layout->msg_box_handler();
+}
+
+Yoga::RootItem& PlaterRenderModule::root_item()
+{
+    return m_layout->root_item();
 }
 
 Scene::IToolGizmo* PlaterRenderModule::tool_gizmo(Scene::ToolType type, Domain::PrinterTechnology pt)
@@ -573,6 +586,11 @@ void PlaterRenderModule::init_scene_layout()
     );
     m_crashed_projects_dialog =
         std::make_unique<CrashedProjectsDialog>(m_project_interactor, *m_render_module_navigator);
+    m_loading_progress_dialog = std::make_unique<LoadingProgressDialog>(
+        AppServices::instance().navigator(),
+        Biz::Platform::PlatformServices::instance().job_manager(),
+        Biz::Platform::PlatformServices::instance().timer_queue()
+    );
 
     // >> This code is same for Plater/PreviewRenderModule
     m_top_bar = std::make_unique<TopBar>(
@@ -633,7 +651,8 @@ void PlaterRenderModule::init_scene_layout()
         m_effective_values_dialog.release(),
         m_plugin_system.init_dialog().release(),
         m_crashed_projects_dialog.release(),
-        m_preset_updater_dialog.release()
+        m_preset_updater_dialog.release(),
+        m_loading_progress_dialog.release()
     ));
     m_layout->init();
 
@@ -1246,6 +1265,9 @@ void PlaterRenderModule::render_scene(Render::CommandBuffer& cmd_buffer)
 
     Render::ScopedDebugGroup event_imgui_render("Plater Render", cmd_buffer);
     m_device->load_state();
+
+    // After load_state(), the active tool may bind GPU resources through the device.
+    m_gizmo_manager->prepare_scene_for_rendering();
 
     cmd_buffer.set_viewport(Render::Rect::from(0, 0, m_screen_info));
     cmd_buffer.set_clear_values({0.61f, 0.61f, 0.61f, 1.00f});

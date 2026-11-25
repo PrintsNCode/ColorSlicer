@@ -1,6 +1,7 @@
 #include "Slic3r/Biz/Format/3mf/ForeignPrint.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 
+#include <chrono>
 #include <Slic3r/Assert.hpp>
 #include <Slic3r/Domain/Workbench.hpp>
 #include <Slic3r/Domain/Project.hpp>
@@ -18,6 +19,8 @@
 #include "Slic3r/Biz/UserAccount/ConnectUtils.hpp"
 #include "Slic3r/Biz/Platform/JobManager/JobManager.hpp"
 #include "Slic3r/Biz/FileLoadingLogic.hpp"
+#include "Slic3r/Biz/FileOpen/FileLoadJob.hpp"
+#include "Slic3r/Biz/MainThreadDialogProvider.hpp"
 #include "Slic3r/Biz/Scene/BedFactory.hpp"
 #include "Slic3r/Biz/Algorithms/Point.hpp"
 #include "Slic3r/Biz/Algorithms/TriangleSelector.hpp"
@@ -91,7 +94,8 @@ const Domain::Project& ProjectInteractor::selected_project() const
 
 bool ProjectInteractor::selected_project_is_empty() const
 {
-    return selected_project().model().objects.empty();
+    return selected_project().model().objects.empty()
+        && !m_projects_with_file_reads.contains(m_selection.project_id);
 }
 
 Domain::Project& ProjectInteractor::selected_project()
@@ -176,10 +180,7 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
 {
     const auto report_error = [this](const std::string& description) -> tl::unexpected<std::string>
     {
-        SPDLOG_ERROR(description);
-        invoke_listeners<IProjectsChangedListener>([&description](IProjectsChangedListener* l)
-                                                   { l->on_project_load_failed(description); });
-
+        report_file_load_failure(description);
         return tl::unexpected<std::string>{description};
     };
 
@@ -273,28 +274,167 @@ tl::expected<SelectionId, std::string> ProjectInteractor::do_load_project(
     return project_id;
 }
 
+namespace {
+
+/**
+ * @brief Each file takes the same share, its stages start at fixed offsets within the share.
+ */
+double file_load_progress(
+    FileOpen::FileLoadStage stage,
+    const FileOpen::FileLoadProgressPayload& payload
+)
+{
+    const double stage_offset{
+        stage == FileOpen::FileLoadStage::Reading      ? 0.1
+        : stage == FileOpen::FileLoadStage::Converting ? 0.7
+                                                       : 0.9
+    };
+    return (static_cast<double>(payload.file_index) + stage_offset)
+        / static_cast<double>(std::max<size_t>(payload.file_count, 1));
+}
+
+/**
+ * @brief Reports stages of a file loading job to its tracker.
+ *
+ * It throws FileLoadCancelled when the job is asked to stop.
+ */
+FileOpen::FileLoadProgressFn make_file_load_progress_fn(
+    const Biz::JThread::StopToken& stop_token,
+    Platform::JobManager::ProgressTracker& progress_tracker
+)
+{
+    return [&stop_token, &progress_tracker](
+               FileOpen::FileLoadStage stage,
+               const FileOpen::FileLoadProgressPayload& payload
+           )
+    {
+        if (stop_token.stop_requested()) {
+            throw FileOpen::FileLoadCancelled{};
+        }
+        progress_tracker.set_progress_detail({static_cast<int>(stage), payload});
+        progress_tracker.set(Domain::Percentage{file_load_progress(stage, payload)});
+    };
+}
+
+/**
+ * @return Provider which shows the dialogs on the main thread, empty without a provider.
+ */
+std::optional<MainThreadDialogProvider> make_job_dialog_provider(
+    IMessageDialogProvider* dialog_provider,
+    Platform::IMainThreadDispatcher& dispatcher,
+    const Biz::JThread::StopToken& stop_token
+)
+{
+    if (dialog_provider == nullptr) {
+        return std::nullopt;
+    }
+    return std::make_optional<MainThreadDialogProvider>(*dialog_provider, dispatcher, stop_token);
+}
+
+/**
+ * @param batch_index Order of the project in a batch of projects loaded one by one.
+ * @param batch_count Count of the projects in the batch, 1 for a single project.
+ */
+Project load_project_job(
+    Biz::JThread::StopToken stop_token,
+    Platform::IMainThreadDispatcher& dispatcher,
+    Platform::JobManager::ProgressTracker progress_tracker,
+    const boost::filesystem::path& file_path,
+    const Domain::Preset::Bundle& preset_bundle,
+    IMessageDialogProvider* dialog_provider,
+    size_t batch_index,
+    size_t batch_count
+)
+{
+    std::optional<MainThreadDialogProvider> job_dialog_provider{
+        make_job_dialog_provider(dialog_provider, dispatcher, stop_token)
+    };
+    const FileOpen::FileLoadProgressFn report_progress{
+        [report = make_file_load_progress_fn(stop_token, progress_tracker), batch_index, batch_count](
+            FileOpen::FileLoadStage stage,
+            const FileOpen::FileLoadProgressPayload& payload
+        ) { report(stage, {payload.file_name, batch_index, batch_count}); }
+    };
+
+    Project project{FileLoadingLogic::load_file_as_project(
+        file_path,
+        preset_bundle,
+        job_dialog_provider ? &*job_dialog_provider : nullptr,
+        report_progress
+    )};
+    report_progress(FileOpen::FileLoadStage::AddingToScene, {file_path.filename().string()});
+    return project;
+}
+
+/**
+ * @brief STEP import settings shared by a job, which may change them, and its result handlers,
+ * which store them on the main thread.
+ */
+using SharedStepImportSettings = std::shared_ptr<std::optional<FileLoadingLogic::StepImportSettings>>;
+
+SharedStepImportSettings make_shared_step_import_settings()
+{
+    return std::make_shared<std::optional<FileLoadingLogic::StepImportSettings>>(
+        FileLoadingLogic::load_step_import_settings()
+    );
+}
+
+void store_shared_step_import_settings(const SharedStepImportSettings& step_settings)
+{
+    if (step_settings->has_value()) {
+        FileLoadingLogic::store_step_import_settings(step_settings->value());
+    }
+}
+
+std::vector<FileLoadingLogic::ImportedFileData> read_files_job(
+    Biz::JThread::StopToken stop_token,
+    Platform::IMainThreadDispatcher& dispatcher,
+    Platform::JobManager::ProgressTracker progress_tracker,
+    const std::vector<boost::filesystem::path>& paths,
+    int tool_count,
+    IMessageDialogProvider* dialog_provider,
+    const SharedStepImportSettings& step_settings
+)
+{
+    std::optional<MainThreadDialogProvider> job_dialog_provider{
+        make_job_dialog_provider(dialog_provider, dispatcher, stop_token)
+    };
+    const FileOpen::FileLoadProgressFn report_progress{
+        make_file_load_progress_fn(stop_token, progress_tracker)
+    };
+
+    std::vector<FileLoadingLogic::ImportedFileData> data{FileLoadingLogic::read_files_for_import(
+        paths,
+        tool_count,
+        job_dialog_provider ? &*job_dialog_provider : nullptr,
+        step_settings->has_value() ? &step_settings->value() : nullptr,
+        report_progress
+    )};
+    report_progress(
+        FileOpen::FileLoadStage::AddingToScene,
+        {paths.size() == 1 ? paths.front().filename().string() : std::string{},
+         paths.size() - 1,
+         paths.size()}
+    );
+    return data;
+}
+
+} // namespace
+
 void ProjectInteractor::load_project(
     const boost::filesystem::path& file_path,
     EmptyProjectAction empty_project_action,
     bool temporary_file,
-    std::function<void()> on_done
+    FileOpen::FileLoadDoneFn on_done
 )
 {
     invoke_listeners<IProjectsChangedListener>([](IProjectsChangedListener* l) {
         l->on_file_load_started();
     });
 
-    auto report_error{
-        [this](const std::string& description)
-        {
-            SPDLOG_ERROR(description);
-            invoke_listeners<IProjectsChangedListener>([&description](IProjectsChangedListener* l)
-                                                       { l->on_project_load_failed(description); });
-        }
-    };
-
-    auto on_result{[this, file_path, empty_project_action, temporary_file, on_done, report_error](Project&& project)
+    auto on_result{[this, file_path, empty_project_action, temporary_file, on_done](Project&& project)
     {
+        FileOpen::FileLoadResult result{FileOpen::FileLoadResult::Failed};
         try {
             const SelectionId previous_project_id = m_selection.project_id;
             const bool replace_previous_project = empty_project_action == EmptyProjectAction::Replace
@@ -311,49 +451,48 @@ void ProjectInteractor::load_project(
                 temporary_file ? std::nullopt : std::make_optional(file_path)
             );
             if (loaded.has_value()) {
+                result = FileOpen::FileLoadResult::Loaded;
                 if (replace_previous_project) {
                     this->remove_project(previous_project_id);
                 }
             }
         } catch (const std::exception& e) {
-            report_error(fmt::format("Loading file failed: {}", e.what()));
+            report_file_load_failure(fmt::format("Loading file failed: {}", e.what()));
         }
         if (on_done) {
-            on_done();
+            on_done(result);
         }
     }};
 
-    auto on_error{[report_error, on_done](std::exception_ptr eptr)
+    auto on_error{[this, on_done](std::exception_ptr eptr)
                   {
-                      std::string description = "Unknown error";
-                      try {
-                          std::rethrow_exception(eptr);
-                      } catch (Loaded3MFException& e) {
-                          description = fmt::format("Loading file failed: {}", e.issue.msg);
-                      } catch (std::exception& e) {
-                          description = fmt::format("Loading file failed: {}", e.what());
-                      } catch (...) {
-                      }
-                      report_error(description);
+                      const FileOpen::FileLoadResult result{handle_file_load_job_exception(eptr)};
                       if (on_done) {
-                          on_done();
+                          on_done(result);
                       }
                   }};
 
     Platform::PlatformServices::instance()
         .job_manager()
         .create_job(
-            "project_load",
+            next_file_load_job_name("project"),
             // TODO: preset_bundle may change, making its copy wouldn't help
             [&preset_bundle = m_workbench.preset_bundle(), dialog_provider = m_dialog_provider](
                 Biz::JThread::StopToken stop_token,
+                Platform::IMainThreadDispatcher& dispatcher,
+                Platform::JobManager::ProgressTracker progress_tracker,
                 const boost::filesystem::path file_path
             ) -> Domain::Project
             {
-                return FileLoadingLogic::load_file_as_project(
+                return load_project_job(
+                    stop_token,
+                    dispatcher,
+                    std::move(progress_tracker),
                     file_path,
                     preset_bundle,
-                    dialog_provider
+                    dialog_provider,
+                    0,
+                    1
                 );
             },
             file_path
@@ -373,10 +512,12 @@ void ProjectInteractor::load_projects(
         std::deque<boost::filesystem::path> queue;
         std::list<boost::filesystem::path> restored;
         std::function<void()> next;
+        size_t count{0};
     };
 
     auto state = std::make_shared<State>();
     state->queue.assign(file_paths.begin(), file_paths.end());
+    state->count = file_paths.size();
 
     state->next = [this, state, restored_projects]
     {
@@ -393,19 +534,31 @@ void ProjectInteractor::load_projects(
 
         const boost::filesystem::path file_path = std::move(state->queue.front());
         state->queue.pop_front();
+        const size_t batch_index{state->count - state->queue.size() - 1};
 
         Platform::PlatformServices::instance()
             .job_manager()
             .create_job(
-                "project_load",
+                next_file_load_job_name("project"),
                 [&preset_bundle = m_workbench.preset_bundle(),
-                 dialog_provider =
-                     m_dialog_provider](Biz::JThread::StopToken, boost::filesystem::path file_path)
+                 dialog_provider = m_dialog_provider,
+                 batch_index,
+                 batch_count = state->count](
+                    Biz::JThread::StopToken stop_token,
+                    Platform::IMainThreadDispatcher& dispatcher,
+                    Platform::JobManager::ProgressTracker progress_tracker,
+                    boost::filesystem::path file_path
+                )
                 {
-                    return FileLoadingLogic::load_file_as_project(
+                    return load_project_job(
+                        stop_token,
+                        dispatcher,
+                        std::move(progress_tracker),
                         file_path,
                         preset_bundle,
-                        dialog_provider
+                        dialog_provider,
+                        batch_index,
+                        batch_count
                     );
                 },
                 file_path
@@ -430,29 +583,23 @@ void ProjectInteractor::load_projects(
                         state->restored.push_back(file_path);
                     }
 
-                    do_load_project(std::move(project), {});
+                    // The job ends only after this returns, a throw would keep the loading dialog open.
+                    try {
+                        do_load_project(std::move(project), {});
+                    } catch (const std::exception& e) {
+                        report_file_load_failure(fmt::format("Loading file failed: {}", e.what()));
+                    }
                     state->next();
                 }
             )
             .on_exception(
                 [this, state](std::exception_ptr eptr)
                 {
-                    std::string description = "Unknown error";
-
-                    try {
-                        std::rethrow_exception(eptr);
-                    } catch (Loaded3MFException& e) {
-                        description = fmt::format("Loading file failed: {}", e.issue.msg);
-                    } catch (std::exception& e) {
-                        description = fmt::format("Loading file failed: {}", e.what());
-                    } catch (...) {
+                    if (handle_file_load_job_exception(eptr) == FileOpen::FileLoadResult::Cancelled)
+                    {
+                        // Backups of the projects which weren't loaded stay for the next recovery.
+                        state->queue.clear();
                     }
-
-                    SPDLOG_ERROR(description);
-                    invoke_listeners<IProjectsChangedListener>(
-                        [&description](auto* l) { l->on_project_load_failed(description); }
-                    );
-
                     state->next();
                 }
             )
@@ -931,6 +1078,7 @@ void ProjectInteractor::remove_project(Domain::SelectionId project_id)
     ASSERT(it != projects.end());
 
     Platform::PlatformServices::instance().job_manager().cancel_jobs_for_project(project_id);
+    m_projects_with_file_reads.erase(project_id);
 
     invoke_listeners<IProjectsChangedListener>(
         [project_id](auto* l) { l->on_project_will_be_removed(project_id); }
@@ -1040,24 +1188,73 @@ void ProjectInteractor::do_result_upload(
     do_result_export_inner(id, std::move(config), std::move(data));
 }
 
+namespace {
+constexpr std::chrono::seconds CONNECT_UPLOAD_TOKEN_WAIT{10};
+} // namespace
+
 void ProjectInteractor::do_result_upload_connect(
     const Domain::SlicingId id,
     const std::string& connect_msg,
     const std::string& filename_override /* = std::string()*/
 )
 {
+    const Network::ServiceConfig& service_config = Network::ServiceConfig::instance();
     PhysicalPrinter::PhysicalPrinterConfig config;
-    config.host = Network::ServiceConfig::instance().connect_url();
     PhysicalPrinter::ConnectUpload auth;
+    config.host = service_config.connect_api_url();
+    if (config.host.empty()) {
+        config.host = service_config.connect_url();
+        auth.api    = PhysicalPrinter::ConnectUploadApi::Legacy;
+    }
     auth.access_token = m_user_account_interactor.access_token();
+    auth.on_unauthorized = [this](const std::string& access_token)
+    {
+        Platform::PlatformServices::instance().main_thread_dispatcher().dispatch_on_main_thread(
+            [this, access_token]() { m_user_account_interactor.on_unauthorized(access_token); }
+        );
+    };
     config.payload = std::move(auth);
 
     std::string filename;
     std::string body_json;
     if (!UserAccount::ConnectUtils::config_from_json(connect_msg, config, filename, body_json)) {
         SPDLOG_ERROR("Upload to Connect has failed - failed to read Connect message.");
+        report_connect_upload_error(Biz::_u8L("Prusa Connect sent an invalid print request."));
         return;
     }
+
+    PhysicalPrinter::ConnectUpload& upload = std::get<PhysicalPrinter::ConnectUpload>(config.payload);
+    if (upload.api == PhysicalPrinter::ConnectUploadApi::SlicerRest && upload.organization_id.empty()) {
+        SPDLOG_ERROR(
+            "Upload to Connect has failed - the Connect message has no organization for printer {}.",
+            upload.printer_uuid
+        );
+        report_connect_upload_error(
+            Biz::_u8L("Prusa Connect did not provide the organization of the selected printer.")
+        );
+        return;
+    }
+    if (upload.api == PhysicalPrinter::ConnectUploadApi::Legacy && upload.team_id.empty()) {
+        SPDLOG_ERROR(
+            "Upload to Connect has failed - the Connect message has no team for printer {}.",
+            upload.printer_uuid
+        );
+        report_connect_upload_error(
+            Biz::_u8L("Prusa Connect did not provide the team of the selected printer.")
+        );
+        return;
+    }
+    upload.files_url        = service_config.connect_organization_files_url(upload.organization_id);
+    upload.queue_url        = service_config.connect_printer_queue_url(upload.printer_uuid);
+    upload.printer_page_url = service_config.connect_printer_page_url(upload.printer_uuid);
+    upload.current_access_token = [this]()
+    { return m_user_account_interactor.wait_for_access_token(CONNECT_UPLOAD_TOKEN_WAIT); };
+    SPDLOG_INFO(
+        "Upload to Connect: printer {}, organization {}, team {}.",
+        upload.printer_uuid,
+        upload.organization_id,
+        upload.team_id
+    );
 
     if (!filename_override.empty()) {
         filename = filename_override;
@@ -1069,6 +1266,13 @@ void ProjectInteractor::do_result_upload_connect(
     PrintHost::PrintHostJobData data{std::monostate{}, filename};
     data.request_body_json = std::move(body_json);
     do_result_export_inner(id, std::move(config), std::move(data));
+}
+
+void ProjectInteractor::report_connect_upload_error(const std::string& msg)
+{
+    if (m_dialog_provider) {
+        m_dialog_provider->show_error_dialog(msg, Biz::_u8L("Prusa Connect"));
+    }
 }
 
 void ProjectInteractor::on_download_models(const std::vector<std::string>& message)
@@ -1178,8 +1382,50 @@ void ProjectInteractor::set_output_extension(Domain::SelectionId project_id, con
     it->second.directory_storage().set_output_extension(extension);
 }
 
-void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::path> paths, bool temporary_sources)
+std::string ProjectInteractor::next_file_load_job_name(const std::string& kind)
 {
+    return std::string(FileOpen::FILE_LOAD_JOB_PREFIX) + "_" + kind + "_"
+        + std::to_string(++m_file_load_job_counter);
+}
+
+void ProjectInteractor::report_file_load_failure(const std::string& description)
+{
+    SPDLOG_ERROR(description);
+    invoke_listeners<IProjectsChangedListener>([&description](IProjectsChangedListener* l)
+                                               { l->on_project_load_failed(description); });
+}
+
+FileOpen::FileLoadResult ProjectInteractor::handle_file_load_job_exception(std::exception_ptr eptr)
+{
+    std::string description = "Unknown error";
+    try {
+        std::rethrow_exception(eptr);
+    } catch (const FileOpen::FileLoadCancelled&) {
+        return FileOpen::FileLoadResult::Cancelled;
+    } catch (const Loaded3MFException& e) {
+        description = fmt::format("Loading file failed: {}", e.issue.msg);
+    } catch (const std::exception& e) {
+        description = fmt::format("Loading file failed: {}", e.what());
+    } catch (...) {
+    }
+
+    report_file_load_failure(description);
+    return FileOpen::FileLoadResult::Failed;
+}
+
+void ProjectInteractor::load_models_to_project(
+    std::vector<boost::filesystem::path> paths,
+    bool temporary_sources,
+    FileOpen::FileLoadDoneFn on_done
+)
+{
+    if (paths.empty()) {
+        if (on_done) {
+            on_done(FileOpen::FileLoadResult::Loaded);
+        }
+        return;
+    }
+
     // A single 3MF added to an empty project (the "Add" / "Import" button) is opened as a project, exactly like
     // "Open project": a 3MF written by another application then brings its colors and print settings and
     // starts on the printer with the most tool slots. Into a project that already has objects it is still added.
@@ -1187,7 +1433,7 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
     // always imported directly: neither the project load nor the deferred OBJ import below could read them.
     if (!temporary_sources && paths.size() == 1 && FileLoadingLogic::is_project_file(paths.front().string())
         && selected_project_is_empty()) {
-        this->load_project(paths.front(), EmptyProjectAction::Replace);
+        this->load_project(paths.front(), EmptyProjectAction::Replace, false, std::move(on_done));
         return;
     }
 
@@ -1208,14 +1454,14 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
                 // 3MF loading job is delivered, and not inside the file dialog callback: replacing it while
                 // the interface is being drawn leaves the renderer with textures of the removed project.
                 Platform::PlatformServices::instance().main_thread_dispatcher().dispatch_on_main_thread(
-                    [this, paths, colors = std::move(*colors)]() mutable
+                    [this, paths, colors = std::move(*colors), on_done = std::move(on_done)]() mutable
                     {
                         const SelectionId previous_project_id = m_selection.project_id;
                         Project colored_project;
                         colored_project.imported_colors() = std::move(colors);
                         if (this->do_load_project(std::move(colored_project), {}).has_value())
                             this->remove_project(previous_project_id);
-                        this->import_models_into_selected_project(std::move(paths), false);
+                        this->import_models_into_selected_project(std::move(paths), false, std::move(on_done));
                     }
                 );
                 return;
@@ -1223,18 +1469,13 @@ void ProjectInteractor::load_models_to_project(std::vector<boost::filesystem::pa
         }
     }
 
-    this->import_models_into_selected_project(std::move(paths), temporary_sources);
+    this->import_models_into_selected_project(std::move(paths), temporary_sources, std::move(on_done));
 }
 
-void ProjectInteractor::import_models_into_selected_project(
-    std::vector<boost::filesystem::path> paths,
-    bool temporary_sources
-)
+const Domain::ConfigContainer* ProjectInteractor::selected_bed_config_container(Domain::BedRef& bed)
 {
-    const auto& proj            = m_workbench.project(selected_project_id());
-    Domain::BedRef selected_bed = scene_interactor().bed_selection().last_selected_bed();
-    const Domain::ConfigContainer* cc =
-        proj.find_config_container(selected_bed.config_container_id);
+    const auto& proj = m_workbench.project(selected_project_id());
+    const Domain::ConfigContainer* cc = proj.find_config_container(bed.config_container_id);
     const auto has_bed_instance = [](const Domain::ConfigContainer* container, std::size_t instance_id) {
         if (container == nullptr)
             return false;
@@ -1244,46 +1485,205 @@ void ProjectInteractor::import_models_into_selected_project(
         }
         return false;
     };
-    if (!has_bed_instance(cc, selected_bed.instance_id)) {
+    if (!has_bed_instance(cc, bed.instance_id)) {
         // The bed selection can still point to the project that was just replaced (see above):
         // fall back to the first bed of the project that is selected now.
-        cc = proj.config_containers().front().get();
-        selected_bed = {cc->id().id, cc->bed_instances().front()->id().id};
-        scene_interactor().bed_selection().select_one(selected_bed, Scene::CameraActionOnBedSelection::CenterOnBed);
+        cc  = proj.config_containers().front().get();
+        bed = {cc->id().id, cc->bed_instances().front()->id().id};
+        scene_interactor().bed_selection().select_one(bed, Scene::CameraActionOnBedSelection::CenterOnBed);
     }
-    const Domain::BedInstance& inst = cc->find_bed_instance(selected_bed.instance_id);
-    int slot_count             = cc->selected_preset().hw_config.material_slot_count();
-    std::vector<std::string> extruder_colors;
-    if (const Domain::ConfigItem* item = cc->project_settings().items.find("extruder_colour"))
-        extruder_colors = item->get<std::vector<std::string>>();
-    const FileLoadingLogic::ImportToSceneResult import_result = FileLoadingLogic::import_files_and_add_to_scene(
-        paths,
-        slot_count,
-        scene_interactor(),
-        cc->bed().center() + Biz::Algorithms::Point::to_2d(inst.transformation.get_offset()),
-        m_dialog_provider,
-        FileLoadingLogic::ImportOptions{.temporary_sources = temporary_sources, .extruder_colors = std::move(extruder_colors)}
-    );
+    return cc;
+}
 
-    if (import_result.instances.empty()) {
+void ProjectInteractor::import_models_into_selected_project(
+    std::vector<boost::filesystem::path> paths,
+    bool temporary_sources,
+    FileOpen::FileLoadDoneFn on_done
+)
+{
+    const SelectionId project_id{selected_project_id()};
+    Domain::BedRef selected_bed{scene_interactor().bed_selection().last_selected_bed()};
+    const Domain::ConfigContainer* cc{selected_bed_config_container(selected_bed)};
+    const int slot_count{static_cast<int>(cc->selected_preset().hw_config.material_slot_count())};
+
+    auto on_result{[this, project_id, first_path = paths.front(), temporary_sources](
+                       std::vector<FileLoadingLogic::ImportedFileData> data
+                   ) -> FileOpen::FileLoadResult
+    {
+        if (!project_exists(project_id)) {
+            return FileOpen::FileLoadResult::Cancelled;
+        }
+        if (selected_project_id() != project_id) {
+            select_project(project_id);
+        }
+
+        // The bed is taken now, the user could change it during the loading.
+        Domain::BedRef bed{scene_interactor().bed_selection().last_selected_bed()};
+        const Domain::ConfigContainer* config_container{selected_bed_config_container(bed)};
+        const Domain::BedInstance& bed_instance{
+            config_container->find_bed_instance(bed.instance_id)
+        };
+        // Colors of files written by other applications are mapped to the nearest extruder colors.
+        std::vector<std::string> extruder_colors;
+        if (const Domain::ConfigItem* item = config_container->project_settings().items.find("extruder_colour"))
+            extruder_colors = item->get<std::vector<std::string>>();
+        const std::size_t material_slots = static_cast<std::size_t>(
+            std::max(static_cast<int>(config_container->selected_preset().hw_config.material_slot_count()), 1)
+        );
+        const FileLoadingLogic::ImportToSceneResult import_result{
+            FileLoadingLogic::add_imported_files_to_scene(
+                std::move(data),
+                scene_interactor(),
+                config_container->bed().center()
+                    + Biz::Algorithms::Point::to_2d(bed_instance.transformation.get_offset()),
+                FileLoadingLogic::ImportOptions{
+                    .temporary_sources = temporary_sources,
+                    .extruder_colors   = std::move(extruder_colors),
+                    .slot_count        = material_slots
+                }
+            )
+        };
+        if (import_result.instances.empty()) {
+            return FileOpen::FileLoadResult::Failed;
+        }
+
+        if (!temporary_sources) {
+            set_project_dir(project_id, first_path);
+        }
+
+        arrange_interactor().arrange_added_instances(
+            project_id,
+            import_result.instances,
+            bed,
+            UndoSnapshotType::AddObject
+        );
+
+        if (import_result.geometry_only_3mf) {
+            invoke_listeners<IProjectsChangedListener>([](IProjectsChangedListener* l) {
+                l->on_geometry_only_imported();
+            });
+        }
+        return FileOpen::FileLoadResult::Loaded;
+    }};
+
+    start_file_read_job("models", std::move(paths), slot_count, project_id, on_result, on_done);
+}
+
+void ProjectInteractor::load_volumes_to_selected_object(
+    std::vector<boost::filesystem::path> paths,
+    Domain::ModelVolumeType volume_type,
+    FileOpen::FileLoadDoneFn on_done
+)
+{
+    if (paths.empty()) {
+        if (on_done) {
+            on_done(FileOpen::FileLoadResult::Loaded);
+        }
         return;
     }
 
-    if (!temporary_sources) {
-        set_project_dir(selected_project_id(), paths.front());
-    }
+    const SelectionId project_id{selected_project_id()};
+    const Scene::ObjectSelection selection{scene_interactor().object_selection()};
 
-    arrange_interactor().arrange_added_instances(
-        selected_project_id(),
-        import_result.instances,
-        selected_bed,
-        UndoSnapshotType::AddObject
-    );
+    auto on_result{[this, project_id, selection, volume_type](
+                       std::vector<FileLoadingLogic::ImportedFileData> data
+                   ) -> FileOpen::FileLoadResult
+    {
+        if (selected_project_id() != project_id
+            || scene_interactor().object_selection() != selection)
+        {
+            report_file_load_failure(
+                "Loading file failed: the selection changed during the loading"
+            );
+            return FileOpen::FileLoadResult::Failed;
+        }
+        FileLoadingLogic::add_imported_volumes_to_selected_object(
+            std::move(data),
+            volume_type,
+            scene_interactor()
+        );
+        return FileOpen::FileLoadResult::Loaded;
+    }};
 
-    if (import_result.geometry_only_3mf) {
-        invoke_listeners<IProjectsChangedListener>([](IProjectsChangedListener* l) {
-            l->on_geometry_only_imported();
-        });
+    start_file_read_job("volumes", std::move(paths), 1, project_id, on_result, on_done);
+}
+
+void ProjectInteractor::start_file_read_job(
+    const std::string& kind,
+    std::vector<boost::filesystem::path> paths,
+    int tool_count,
+    SelectionId project_id,
+    std::function<FileOpen::FileLoadResult(std::vector<FileLoadingLogic::ImportedFileData>)> apply,
+    FileOpen::FileLoadDoneFn on_done
+)
+{
+    SharedStepImportSettings step_settings{make_shared_step_import_settings()};
+    m_projects_with_file_reads.insert(project_id);
+
+    Platform::PlatformServices::instance()
+        .job_manager()
+        .create_job(
+            next_file_load_job_name(kind),
+            [tool_count, dialog_provider = m_dialog_provider, step_settings](
+                Biz::JThread::StopToken stop_token,
+                Platform::IMainThreadDispatcher& dispatcher,
+                Platform::JobManager::ProgressTracker progress_tracker,
+                std::vector<boost::filesystem::path> paths
+            )
+            {
+                return read_files_job(
+                    stop_token,
+                    dispatcher,
+                    std::move(progress_tracker),
+                    paths,
+                    tool_count,
+                    dialog_provider,
+                    step_settings
+                );
+            },
+            std::move(paths)
+        )
+        .set_project_id(project_id)
+        .on_result(
+            [this, project_id, apply, on_done, step_settings](
+                std::vector<FileLoadingLogic::ImportedFileData> data
+            )
+            {
+                end_file_read(project_id);
+                store_shared_step_import_settings(step_settings);
+                FileOpen::FileLoadResult result{FileOpen::FileLoadResult::Failed};
+                // The job ends only after this returns, a throw would keep the loading dialog open.
+                try {
+                    result = apply(std::move(data));
+                } catch (...) {
+                    result = handle_file_load_job_exception(std::current_exception());
+                }
+                if (on_done) {
+                    on_done(result);
+                }
+            }
+        )
+        .on_exception(
+            [this, project_id, on_done, step_settings](std::exception_ptr eptr)
+            {
+                end_file_read(project_id);
+                store_shared_step_import_settings(step_settings);
+                const FileOpen::FileLoadResult result{handle_file_load_job_exception(eptr)};
+                if (on_done) {
+                    on_done(result);
+                }
+            }
+        )
+        .start();
+}
+
+void ProjectInteractor::end_file_read(SelectionId project_id)
+{
+    // Already erased when the project was removed.
+    if (const auto it{m_projects_with_file_reads.find(project_id)};
+        it != m_projects_with_file_reads.end())
+    {
+        m_projects_with_file_reads.erase(it);
     }
 }
 

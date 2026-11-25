@@ -1,5 +1,6 @@
 #include "Slic3r/App/WelcomeDialog.hpp"
 #include <ranges>
+#include "Slic3r/App/AccountServiceSwitcher.hpp"
 #include "Slic3r/App/AppConfig.hpp"
 #include "Slic3r/App/AppConfigInteractor.hpp"
 #include "Slic3r/App/Browser/BrowserLogicLogInRedirect.hpp"
@@ -16,7 +17,9 @@
 #include "Slic3r/App/AddPrinterPanel.hpp"
 #include "Slic3r/App/WarningPanel.hpp"
 #include "Slic3r/App/Navigator.hpp"
+#include "Slic3r/Biz/ConnectPrinter/ConnectPrinter.hpp"
 #include "Slic3r/Biz/I18N/I18N.hpp"
+#include "Slic3r/Biz/Network/ServiceConfig.hpp"
 #include "Slic3r/Biz/Preset/HwConfigEvaluator.hpp"
 #include "Slic3r/Biz/ProjectInteractor.hpp"
 #include "Slic3r/Biz/HwConfigMatchers.hpp"
@@ -167,6 +170,7 @@ static ItemPtr create_navigation(const NavigationSetup& setup, const Theme& them
 
     if (!setup.left_button_text.empty()) {
         auto left_button{left_item->emplace_back<LayoutButton>(Biz::_u8L("Back"))};
+        left_button->set_object_name("NavigationBackButton");
         left_button->set_background_color(Platform::Color::ButtonTransparent);
         left_button->set_content_padding({23_fpx, 14_fpx, 23_fpx, 14_fpx});
         left_button->callbacks().action = setup.left_button_action;
@@ -179,6 +183,7 @@ static ItemPtr create_navigation(const NavigationSetup& setup, const Theme& them
 
     if (!setup.center_button_text.empty()) {
         auto center_button{center_item->emplace_back<LayoutButton>(setup.center_button_text)};
+        center_button->set_object_name("NavigationPrimaryButton");
         center_button->set_background_color(Platform::Color::AccentPrimary);
         center_button->set_width(200_fpx);
         center_button->set_height(45_fpx);
@@ -193,6 +198,7 @@ static ItemPtr create_navigation(const NavigationSetup& setup, const Theme& them
 
     if (!setup.rigth_button_text.empty()) {
         auto right_button{right_item->emplace_back<LayoutButton>(setup.rigth_button_text)};
+        right_button->set_object_name("NavigationSecondaryButton");
         right_button->set_background_color(Platform::Color::ButtonTransparent);
         right_button->set_content_padding({23_fpx, 14_fpx, 23_fpx, 14_fpx});
         right_button->callbacks().action = setup.rigth_button_action;
@@ -428,6 +434,13 @@ ItemPtr create_offline_button_content()
     emplace_dot(local_row, green);
     local_row->emplace_back<Text>(Biz::_u8L("Local network printing enabled"));
 
+    auto connect_local_row{result->emplace_back<Item>()};
+    connect_local_row->set_flex_shrink(0);
+    connect_local_row->set_gap(gap);
+    connect_local_row->set_align_items(YGAlignCenter);
+    emplace_dot(connect_local_row, green);
+    connect_local_row->emplace_back<Text>(Biz::_u8L("Prusa Connect (local) enabled"));
+
     return result;
 }
 
@@ -569,6 +582,7 @@ public:
 
         m_add_button =
             m_screen->content()->emplace_back<LayoutButton>(Biz::_u8L("Choose a printer"));
+        m_add_button->set_object_name("ChoosePrinterButton");
         m_add_button->set_background_color(Platform::Color::AccentPrimary);
         m_add_button->set_content_padding({30_fpx, 10_fpx, 30_fpx, 10_fpx});
         m_add_button->callbacks().action = [this]()
@@ -612,10 +626,11 @@ public:
                 const std::optional<std::string> preset_id{
                     printer.hw_config ? find_system_preset_id(printer.hw_config->id) : std::nullopt};
                 if (!preset_id) {
-                    return;
+                    return true;
                 }
                 add_printer(PrinterToAdd{*printer.hw_config, *preset_id, printer});
                 show_dialog(false);
+                return true;
             });
         m_dialog->set_flex_grow(1);
         m_dialog->set_visible(false);
@@ -868,24 +883,20 @@ public:
                             std::vector<PrinterIdentifier> parsing_failures;
                             std::map<PrinterIdentifier, std::vector<std::string>> parsing_warnings;
                             try {
-                                auto json{nlohmann::json::parse(body)};
-                                const auto& root{json.is_array() && json.size() == 1 ? json[0] :
-                                                                                       json};
-                                if (!root.is_object()
-                                    || !root.contains("printers")
-                                    || !root["printers"].is_array())
-                                {
+                                const std::optional<nlohmann::json> printers_json{
+                                    Biz::ConnectPrinter::extract_connect_printers_array(body)};
+                                if (!printers_json) {
                                     handle_error(Biz::_u8L("Invalid response!"));
                                     return;
                                 }
 
-                                if (root["printers"].empty()) {
+                                if (printers_json->empty()) {
                                     m_title->set_title(Biz::_u8L("There are no printers to synchronize."));
                                     m_title->set_sub_title(Biz::_u8L("Please add your printer manually."));
                                     return;
                                 }
 
-                                for (const nlohmann::json& printer_json : root["printers"]) {
+                                for (const nlohmann::json& printer_json : *printers_json) {
                                     if (!printer_json.is_object()) {
                                         handle_error(Biz::_u8L("No printers in the response"));
                                         return;
@@ -1045,6 +1056,7 @@ public:
         right_section->set_align_items(YGAlign::YGAlignCenter);
         auto delete_button{
             right_section->emplace_back<LayoutButton>("", Render::Icon::DeleteBtnIcon)};
+        delete_button->set_object_name("DeletePrinterButton");
         delete_button->set_width(19_fpx);
         delete_button->set_aspect_ratio(1);
         delete_button->callbacks().action = [this, printer_item]() { delete_printer(printer_item); };
@@ -1112,11 +1124,11 @@ ItemPtr WelcomeDialog::create_online_decision_screen(const Theme& theme,
     picker->set_flex_wrap(YGWrapWrap);
     picker->set_justify_content(YGJustifyCenter);
 
-    m_online_button = emplace_online_decision_button(picker, "online-button");
+    m_online_button = emplace_online_decision_button(picker, "OnlineButton");
     m_online_button->append(create_online_button_content());
     m_online_decision_button_group.insert_button(m_online_button);
 
-    m_offline_button = emplace_online_decision_button(picker, "offline-button");
+    m_offline_button = emplace_online_decision_button(picker, "OfflineButton");
     m_offline_button->append(create_offline_button_content());
     m_online_decision_button_group.insert_button(m_offline_button);
 
@@ -1256,13 +1268,15 @@ public:
 
     ItemPtr logged_out_layout()
     {
-        auto login{[this]()
-                   {
-                       AppServices::instance().dialog_manager().show_webview_dialog(
-                           std::make_unique<Browser::BrowserLogicLogInRedirect>(
-                               m_project_interactor.user_account_interactor()),
-                           &m_project_interactor);
-                   }};
+        auto login{
+            [this]()
+            {
+                AppServices::instance().dialog_manager().show_webview_dialog(
+                    Browser::make_log_in_logic(m_project_interactor.user_account_interactor()),
+                    &m_project_interactor
+                );
+            }
+        };
 
         const NavigationSetup navigation_setup{
             .left_button_text     = Biz::_u8L("Back"),
@@ -1353,7 +1367,8 @@ private:
 WelcomeDialog::WelcomeDialog(Biz::ProjectInteractor& project_interactor, Navigator& navigator) :
     m_project_interactor{project_interactor}, m_navigator(navigator)
 {
-    WindowPtr window{std::make_unique<Window>("Welcome dialog")};
+    set_object_name("WelcomePopup");
+    WindowPtr window{std::make_unique<Window>("WelcomeDialog")};
     window->set_orientation(Orientation::Vertical);
     window->set_gap(0);
     window->set_padding(0);
@@ -1583,7 +1598,9 @@ void WelcomeDialog::sync_config() const
     auto& app_config_interactor{AppServices::instance().app_config_interactor()};
     if (app_config.is_webkit_available()) {
         app_config_interactor.set_item_value("enable_printables", Domain::ConfigValue{m_online});
-        app_config_interactor.set_item_value("enable_prusa_account", Domain::ConfigValue{m_online});
+        AppServices::instance()
+            .account_service_switcher()
+            .enable_services(m_online, true, AccountService::PrusaAccount);
     }
 
     if (app_config.is_sentry_available()) {

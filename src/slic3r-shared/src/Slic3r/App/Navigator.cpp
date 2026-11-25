@@ -74,6 +74,15 @@ bool Navigator::has_modules() const
     return m_project_contexts != nullptr;
 }
 
+Yoga::RootItem* Navigator::current_root_item()
+{
+    if (!has_modules()) {
+        return nullptr;
+    }
+    RenderModuleBase* module = current_render_module();
+    return module != nullptr ? &module->root_item() : nullptr;
+}
+
 void Navigator::navigate_to_module_type(Render::ModuleType type)
 {
     if (!has_modules()) {
@@ -82,6 +91,13 @@ void Navigator::navigate_to_module_type(Render::ModuleType type)
     ProjectContext& context = m_project_contexts->selected();
     context.opened_dialog   = nullptr;
     set_render_module_type(type);
+}
+
+void Navigator::ensure_module_type(Render::ModuleType type)
+{
+    if (has_modules() && m_project_contexts->selected().type != type) {
+        navigate_to_module_type(type);
+    }
 }
 
 void Navigator::set_render_module_type(Render::ModuleType type)

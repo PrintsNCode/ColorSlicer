@@ -301,6 +301,25 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->min = 0;
     def->init_fn = init_with(0.);
 
+    def               = defs.add("over_support_interface_acceleration", typeid(double));
+    def->location     = Print;
+    def->overrides_in = Locations{Tool, Object, MacroSlotOverrides};
+    def->label        = L("Over support interface");
+    def->full_label   = L("Acceleration over support interface");
+    def->option_group = ConfigItemDef::OptionGroup::Print_MotionDynamics_BridgesAcceleration;
+    def->category     = ConfigItemDef::Category::Print_MotionDynamics;
+    def->order        = 1;
+    def->gui_type     = ConfigItemDef::GUIType::textfield;
+    def->tooltip      = L(
+        "Maximum acceleration for the parts of extrusions printed directly on the support, "
+             "which happens only with zero contact Z distance (soluble interface). "
+             "It only limits the acceleration, it never increases it. "
+             "Set zero to disable the limit."
+    );
+    def->units   = {L("mm/s²")};
+    def->min     = 0;
+    def->init_fn = init_with(0.);
+
     def = defs.add("bridge_angle", typeid(double));
     def->location = Print;
     def->overrides_in = Locations{ Object, Volume, MacroOverrides };
@@ -387,21 +406,44 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->min = 0;
     def->init_fn = init_with(60.);
 
-    def = defs.add("over_bridge_speed", typeid(FloatOrPercentage));
-    def->location = Print;
-    def->overrides_in = Locations{ Tool, Object, Volume, MacroSlotOverrides };
+    def               = defs.add("over_bridge_speed", typeid(FloatOrPercentage));
+    def->location     = Print;
+    def->overrides_in = Locations{Tool, Object, Volume, MacroSlotOverrides};
     // TRN: Label for speed used to print infill above bridges.
-    def->label = L("Over bridges");
+    def->label        = L("Over bridges");
     def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
-    def->category = ConfigItemDef::Category::Print_Speed;
-    def->order = 1;
-    def->gui_type = ConfigItemDef::GUIType::unit_or_percentage;
-    def->tooltip = L("Speed for printing solid infill above bridges. Set to 0 to use solid infill speed. "
-                    "If set as percentage, the speed is calculated over solid infill speed. ");
-    def->units = {L("mm/s"), L("%")};;
-    def->min = 0;
-    def->init_fn = init_with(FloatOrPercentage{0.});
+    def->category     = ConfigItemDef::Category::Print_Speed;
+    def->order        = 1;
+    def->gui_type     = ConfigItemDef::GUIType::unit_or_percentage;
+    def->tooltip      = L(
+        "Maximum speed for the parts of solid infill printed above bridges. It only limits the speed, "
+             "it never increases it. Set to 0 to use solid infill speed. "
+             "If set as percentage, the speed is calculated over solid infill speed. "
+    );
+    def->units      = {L("mm/s"), L("%")};
+    def->min        = 0;
+    def->init_fn    = init_with(FloatOrPercentage{0.});
     def->ratio_over = "solid_infill_speed";
+
+    def               = defs.add("over_support_interface_speed", typeid(double));
+    def->location     = Print;
+    def->overrides_in = Locations{Tool, Object, MacroSlotOverrides};
+    // TRN: Label for speed used to print the parts of extrusions lying directly on the support.
+    def->label        = L("Over support interface");
+    def->full_label   = L("Speed over support interface");
+    def->option_group = ConfigItemDef::OptionGroup::Print_Speed_SupportAndBridges;
+    def->category     = ConfigItemDef::Category::Print_Speed;
+    def->order        = 4;
+    def->gui_type     = ConfigItemDef::GUIType::textfield;
+    def->tooltip      = L(
+        "Maximum speed for the parts of extrusions printed directly on the support, "
+             "which happens only with zero contact Z distance (soluble interface). "
+             "It only limits the speed, it never increases it. "
+             "Set zero to disable the limit."
+    );
+    def->units   = {L("mm/s")};
+    def->min     = 0;
+    def->init_fn = init_with(0.);
 
     def             = defs.add("enable_dynamic_overhang_speeds", typeid(bool));
     def->location = Print;
@@ -1638,20 +1680,20 @@ void fdm_config_init_fn(ConfigDefinitions& defs)
     def->min = 0;
     def->max = 100;
     def->choices = {
-        { 0., "0%" },
-        { 5., "5%" },
-        { 10., "10%" },
-        { 15., "15%" },
-        { 20., "20%" },
-        { 25., "25%" },
-        { 30., "30%" },
-        { 40., "40%" },
-        { 50., "50%" },
-        { 60., "60%" },
-        { 70., "70%" },
-        { 80., "80%" },
-        { 90., "90%" },
-        { 100., "100%" }
+        { 0., "0 %" },
+        { 5., "5 %" },
+        { 10., "10 %" },
+        { 15., "15 %" },
+        { 20., "20 %" },
+        { 25., "25 %" },
+        { 30., "30 %" },
+        { 40., "40 %" },
+        { 50., "50 %" },
+        { 60., "60 %" },
+        { 70., "70 %" },
+        { 80., "80 %" },
+        { 90., "90 %" },
+        { 100., "100 %" }
     };
     def->init_fn = init_with(Percentage{20.});
 

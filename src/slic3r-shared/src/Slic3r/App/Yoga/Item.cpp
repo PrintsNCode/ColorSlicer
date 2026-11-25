@@ -10,10 +10,9 @@
 #include <imgui_internal.h>
 #include <fmt/format.h>
 #include <cmath>
+#include <utility>
 
 namespace Slic3r::App::Yoga {
-
-Render::ImguiRender* Item::m_imgui_render = nullptr;
 
 Item::Item()
 {
@@ -79,6 +78,7 @@ void Item::resize(const SizeInfo& size_info)
         YGNodeStyleSetMinHeight(m_node, m_min_height.result);
         m_max_height.evaluate(size_info);
         YGNodeStyleSetMaxHeight(m_node, m_max_height.result);
+        size_limits_changed();
 
         m_flex_grow.evaluate(size_info);
         YGNodeStyleSetFlexGrow(m_node, m_flex_grow.result);
@@ -325,6 +325,24 @@ void Item::set_height(const Unit& height)
     }
 }
 
+void Item::reset_width()
+{
+    if (m_width.has_value()) {
+        m_width.reset();
+        YGNodeStyleSetWidthAuto(m_node);
+        set_style_dirty();
+    }
+}
+
+void Item::reset_height()
+{
+    if (m_height.has_value()) {
+        m_height.reset();
+        YGNodeStyleSetHeightAuto(m_node);
+        set_style_dirty();
+    }
+}
+
 void Item::set_width_percent(float width_percent)
 {
     if (!m_width.has_value()
@@ -484,6 +502,13 @@ void Item::enabled_updated_internal() {}
 
 void Item::visible_updated_internal() {}
 
+void Item::size_limits_changed() {}
+
+Vec2f Item::evaluated_min_size() const
+{
+    return {m_min_width.result, m_min_height.result};
+}
+
 void Item::on_resized()
 {
     if (m_callbacks.size_changed) {
@@ -508,7 +533,41 @@ Vec2f Item::get_global_pos() const
 
 void Item::set_imgui_render(Render::ImguiRender* imgui_render)
 {
-    m_imgui_render = imgui_render;
+    m_configuration.imgui_render = imgui_render;
+}
+
+Render::ImguiRender* Item::imgui_render()
+{
+    return m_configuration.imgui_render;
+}
+
+void Item::set_test_mode(bool test_mode)
+{
+    m_configuration.test_mode = test_mode;
+}
+
+bool Item::debug_enabled()
+{
+#ifdef DEBUG
+    return true;
+#else
+    return m_configuration.test_mode;
+#endif
+}
+
+void Item::set_wheel_changes_value(bool wheel_changes_value)
+{
+    m_configuration.wheel_changes_value = wheel_changes_value;
+}
+
+bool Item::wheel_changes_value()
+{
+    return m_configuration.wheel_changes_value;
+}
+
+Item* Item::take_debug_item()
+{
+    return std::exchange(m_configuration.debug_item, nullptr);
 }
 
 void Object::set_theme(Theme* theme)
@@ -605,6 +664,7 @@ void Item::set_min_width(const Unit& min_width)
         m_min_width.source = min_width;
         m_min_width.evaluate(m_size_info);
         YGNodeStyleSetMinWidth(m_node, m_min_width.result);
+        size_limits_changed();
         set_style_dirty();
     }
 }
@@ -615,6 +675,7 @@ void Item::set_max_width(const Unit& max_width)
         m_max_width.source = max_width;
         m_max_width.evaluate(m_size_info);
         YGNodeStyleSetMaxWidth(m_node, m_max_width.result);
+        size_limits_changed();
         set_style_dirty();
     }
 }
@@ -625,6 +686,7 @@ void Item::set_min_height(const Unit& min_height)
         m_min_height.source = min_height;
         m_min_height.evaluate(m_size_info);
         YGNodeStyleSetMinHeight(m_node, m_min_height.result);
+        size_limits_changed();
         set_style_dirty();
     }
 }
@@ -635,6 +697,7 @@ void Item::set_max_height(const Unit& max_height)
         m_max_height.source = max_height;
         m_max_height.evaluate(m_size_info);
         YGNodeStyleSetMaxHeight(m_node, m_max_height.result);
+        size_limits_changed();
         set_style_dirty();
     }
 }
@@ -816,10 +879,14 @@ void Item::style_node()
     }
 }
 
-void Item::render_item_begin(const Vec2f& pos, const Vec2f& size) {}
+void Item::render_item_begin(const Vec2f& pos, const Vec2f& size)
+{
+    record_render(pos, size);
+}
 
 void Item::render_item_end(const Vec2f& pos, const Vec2f& size)
 {
+    record_render(pos, size);
     render_debug(pos, size);
 
     for (size_t render_index = 0; render_index < m_children_render_order.size(); ++render_index) {
@@ -841,13 +908,35 @@ void Item::render_node(const Vec2f& pos, Item* child)
         return;
     }
 
+    child->record_render(cell_pos, cell_size);
     child->render(cell_pos, cell_size);
+}
+
+void Item::record_render(const Vec2f& pos, const Vec2f& size)
+{
+    m_last_render_pos   = pos;
+    m_last_render_size  = size;
+    m_last_render_frame = ImGui::GetFrameCount();
+}
+
+Vec2f Item::last_render_pos() const
+{
+    return m_last_render_pos;
+}
+
+Vec2f Item::last_render_size() const
+{
+    return m_last_render_size;
+}
+
+int Item::last_render_frame() const
+{
+    return m_last_render_frame;
 }
 
 void Item::render_debug(const Vec2f& pos, const Vec2f& size)
 {
-#ifdef DEBUG
-    {
+    if (debug_enabled()) {
         ImRect rect(to_im(pos), to_im(pos + size));
 
         if (ImGui::IsMouseHoveringRect(rect.Min, rect.Max, false)) {
@@ -855,11 +944,10 @@ void Item::render_debug(const Vec2f& pos, const Vec2f& size)
                 ImDrawList* draw_list = ImGui::GetForegroundDrawList();
                 draw_list->AddRect(rect.Min, rect.Max, IM_COL32(255, 0, 0, 128));
             } else if (ImGui::IsKeyDown(ImGuiMod_Alt)) {
-                m_debug_item = this;
+                m_configuration.debug_item = this;
             }
         }
     }
-#endif
 
     if (m_debug_border) {
         ImDrawList* draw_list = ImGui::GetForegroundDrawList();
@@ -896,7 +984,7 @@ void Item::render_image(
         background_col,
         tint_col
     );
-    m_imgui_render->use_texture(texture);
+    imgui_render()->use_texture(texture);
     ImGui::PopStyleVar();
 }
 
